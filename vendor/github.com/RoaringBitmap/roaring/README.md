@@ -13,7 +13,7 @@ Roaring bitmaps are used by several major systems such as [Apache Lucene][lucene
 [druid]: http://druid.io/
 [spark]: https://spark.apache.org/
 [opensearchserver]: http://www.opensearchserver.com
-[cloudtorrent]: https://github.com/jpillora/cloud-torrent
+[cloudtorrent]: https://github.com/covrom/cloud-torrent
 [whoosh]: https://bitbucket.org/mchaput/whoosh/wiki/Home
 [pilosa]: https://www.pilosa.com/
 [kylin]: http://kylin.apache.org/
@@ -27,7 +27,7 @@ Roaring bitmaps are found to work well in many important applications:
 
 
 The ``roaring`` Go library is used by
-* [Cloud Torrent](https://github.com/jpillora/cloud-torrent): a self-hosted remote torrent client
+* [Cloud Torrent](https://github.com/covrom/cloud-torrent): a self-hosted remote torrent client
 * [runv](https://github.com/hyperhq/runv): an Hypervisor-based runtime for the Open Containers Initiative
 
 There are also  [Java](https://github.com/RoaringBitmap/RoaringBitmap) and [C/C++](https://github.com/RoaringBitmap/CRoaring) versions.  The Java, C, C++ and Go version are binary compatible: e.g,  you can save bitmaps

@@ -4,8 +4,8 @@ Quick start:
 
 * Download Go
 * Setup `GOPATH`
-* `go get github.com/jpillora/cloud-torrent`
-* `cd $GOPATH/src/github.com/jpillora/cloud-torrent`
+* `go get github.com/covrom/cloud-torrent`
+* `cd $GOPATH/src/github.com/covrom/cloud-torrent`
 * Fork this repo
 * Change remote to your fork
 * Edit static files
@@ -15,7 +15,7 @@ Quick start:
 
 To add new dependencies:
 
-* `cd $GOPATH/src/github.com/jpillora/cloud-torrent`
+* `cd $GOPATH/src/github.com/covrom/cloud-torrent`
 * `rm -rf vendor/`
 * `go get -u -v .` Fetch all dependencies into your GOPATH
 * `go get github.com/foo/bar`
