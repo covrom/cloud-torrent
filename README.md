@@ -2,12 +2,16 @@
 
 **Cloud torrent** is a a self-hosted remote torrent client, written in Go (golang). You start torrents remotely, which are downloaded as sets of files on the local disk of the server, which are then retrievable or streamable via HTTP.
 
+**UPDATED VERSION**
+Directories to watching is placed into settings json as a "WatchDirs" array of path's.
+
 ### Features
 
 * Single binary
 * Cross platform
 * Embedded torrent search
 * Real-time updates
+* Directories watching for .torrent files with fsnotify
 * Mobile-friendly
 * Fast [content server](http://golang.org/pkg/net/http/#ServeContent)
 
@@ -20,10 +24,6 @@ See [Future Features here](#future-features)
 [![Releases](https://img.shields.io/github/release/covrom/cloud-torrent.svg)](https://github.com/covrom/cloud-torrent/releases) [![Releases](https://img.shields.io/github/downloads/covrom/cloud-torrent/total.svg)](https://github.com/covrom/cloud-torrent/releases)
 
 See [the latest release](https://github.com/covrom/cloud-torrent/releases/latest) or download and install it now with
-
-```
-curl https://i.jpillora.com/cloud-torrent! | bash
-```
 
 *Tip*: [Auto-run `cloud-torrent` on boot](https://github.com/covrom/cloud-torrent/wiki/Auto-Run-on-Reboot)
 
@@ -143,3 +143,4 @@ This project is the rewrite of the original [Node version](https://github.com/jp
 Credits to @anacrolix for https://github.com/anacrolix/torrent
 
 Copyright (c) 2017 Jaime Pillora
+Copyright (c) 2018 Roman TSovanyan
