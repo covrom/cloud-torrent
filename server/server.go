@@ -173,42 +173,44 @@ func (s *Server) Run(version string) error {
 				log.Fatal(err)
 			}
 
-			log.Printf("Watch a directory: %s", wtchr)
+			log.Printf("Watch a directory: %s\n", wtchr)
 		}
 		go func() {
 			for fn := range chftrn {
 				if !strings.HasSuffix(fn, ".torrent") {
 					continue
 				}
-				for {
-					ftrn, err := os.Open(fn)
-					if os.IsNotExist(err) || os.IsPermission(err) {
-						break
+				ftrn, err := os.Open(fn)
+				if err != nil {
+					log.Println(err)
+					if !(os.IsNotExist(err) || os.IsPermission(err)) {
+						go func(n string) {
+							time.Sleep(time.Second)
+							log.Println("retry", n)
+							chftrn <- n
+						}(fn)
 					}
-					if err == nil {
-						btorr, err := ioutil.ReadAll(ftrn)
-						ftrn.Close()
-						if os.IsNotExist(err) || os.IsPermission(err) {
-							break
-						}
-						if err != nil {
-							log.Println(fn, err)
-						} else {
-							reader := bytes.NewBuffer(btorr)
-							info, err := metainfo.Load(reader)
-							if err != nil {
-								log.Println(fn, err)
-								break
-							}
-							spec := torrent.TorrentSpecFromMetaInfo(info)
-							if err := s.engine.NewTorrent(spec); err != nil {
-								log.Printf("Torrent error: %s", err)
-							}
-							os.Remove(fn)
-							break
-						}
-					}
+					continue
 				}
+				btorr, err := ioutil.ReadAll(ftrn)
+				ftrn.Close()
+				if err != nil {
+					log.Println(fn, err)
+					continue
+				}
+				reader := bytes.NewBuffer(btorr)
+				info, err := metainfo.Load(reader)
+				if err != nil {
+					log.Println(fn, err)
+					continue
+				}
+				spec := torrent.TorrentSpecFromMetaInfo(info)
+				if err := s.engine.NewTorrent(spec); err != nil {
+					log.Printf("Torrent error: %s\n", err)
+				} else {
+					log.Println("load torrent", spec.DisplayName)
+				}
+				os.Remove(fn)
 			}
 		}()
 
