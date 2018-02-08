@@ -29,10 +29,6 @@ See [the latest release](https://github.com/covrom/cloud-torrent/releases/latest
 
 **Docker**
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/covrom/cloud-torrent.svg)][dockerhub] [![Image Size](https://images.microbadger.com/badges/image/covrom/cloud-torrent.svg)][dockerhub]
-
-[dockerhub]: https://hub.docker.com/r/covrom/cloud-torrent/
-
 ``` sh
 $ docker run -d -p 3000:3000 -v /path/to/my/downloads:/downloads covrom/cloud-torrent
 ```
