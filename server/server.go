@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
@@ -16,8 +17,11 @@ import (
 	"time"
 
 	"github.com/NYTimes/gziphandler"
+	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
 	"github.com/covrom/cloud-torrent/engine"
 	"github.com/covrom/cloud-torrent/static"
+	"github.com/fsnotify/fsnotify"
 	"github.com/jpillora/cookieauth"
 	"github.com/jpillora/requestlog"
 	"github.com/jpillora/scraper/scraper"
@@ -133,6 +137,82 @@ func (s *Server) Run(version string) error {
 			time.Sleep(5 * time.Second)
 		}
 	}()
+
+	// start watching dirs
+	if len(c.WatchDirs) > 0 {
+
+		chftrn := make(chan string, 100)
+
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer watcher.Close()
+
+		for _, wtchr := range c.WatchDirs {
+
+			go func() {
+				for {
+					select {
+					case event := <-watcher.Events:
+						// log.Println("event:", event)
+						if event.Op&fsnotify.Create == fsnotify.Create {
+							if strings.HasSuffix(event.Name, ".torrent") {
+								log.Println("New file:", event.Name)
+								chftrn <- event.Name
+							}
+						}
+					case err := <-watcher.Errors:
+						log.Println("error:", err)
+					}
+				}
+			}()
+
+			err = watcher.Add(wtchr)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			log.Printf("Watch a directory: %s", wtchr)
+		}
+		go func() {
+			for fn := range chftrn {
+				if !strings.HasSuffix(fn, ".torrent") {
+					continue
+				}
+				for {
+					ftrn, err := os.Open(fn)
+					if os.IsNotExist(err) || os.IsPermission(err) {
+						break
+					}
+					if err == nil {
+						btorr, err := ioutil.ReadAll(ftrn)
+						ftrn.Close()
+						if os.IsNotExist(err) || os.IsPermission(err) {
+							break
+						}
+						if err != nil {
+							log.Println(fn, err)
+						} else {
+							reader := bytes.NewBuffer(btorr)
+							info, err := metainfo.Load(reader)
+							if err != nil {
+								log.Println(fn, err)
+								break
+							}
+							spec := torrent.TorrentSpecFromMetaInfo(info)
+							if err := s.engine.NewTorrent(spec); err != nil {
+								log.Printf("Torrent error: %s", err)
+							}
+							os.Remove(fn)
+							break
+						}
+					}
+				}
+			}
+		}()
+
+	}
 
 	host := s.Host
 	if host == "" {
