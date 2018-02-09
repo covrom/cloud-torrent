@@ -162,8 +162,8 @@ func (s *Server) Run(version string) error {
 								chftrn <- event.Name
 							}
 						}
-					case err := <-watcher.Errors:
-						log.Println("error:", err)
+						// case err := <-watcher.Errors:
+						// 	log.Println("error:", err)
 					}
 				}
 			}()
@@ -208,11 +208,23 @@ func (s *Server) Run(version string) error {
 				if err := s.engine.NewTorrent(spec); err != nil {
 					log.Printf("Torrent error: %s\n", err)
 				} else {
-					log.Println("load torrent", spec.DisplayName)
+					log.Println("start torrent", spec.DisplayName)
 				}
-				os.Remove(fn)
-				// TODO: wait for download and wait a time after
-				// and delete torrent
+
+				go func(f, ih string) {
+					for {
+						time.Sleep(5 * time.Second)
+						t, ok := s.engine.GetTorrents()[ih]
+						if ok && t.Downloaded >= t.Size {
+							log.Println("done torrent", f)
+							os.Remove(f)
+							time.Sleep(time.Duration(c.DeleteAfterMinutes) * time.Minute)
+							log.Println("delete torrent", f)
+							s.engine.DeleteTorrent(ih)
+						}
+					}
+				}(fn, spec.InfoHash.HexString())
+				// TODO: change to s.listFiles, work after restart
 			}
 		}()
 

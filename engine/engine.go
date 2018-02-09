@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/anacrolix/dht"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
@@ -49,6 +51,14 @@ func (e *Engine) Configure(c Config) error {
 		NoUpload:   !c.EnableUpload,
 		Seed:       c.EnableSeeding,
 	}
+
+	if c.UploadKbps > 16 {
+		tc.UploadRateLimiter = rate.NewLimiter(rate.Every(time.Second), c.UploadKbps*(1<<20))
+	}
+	if c.DownloadKbps > 16 {
+		tc.DownloadRateLimiter = rate.NewLimiter(rate.Every(time.Second), c.DownloadKbps*(1<<20))
+	}
+
 	tc.DisableEncryption = c.DisableEncryption
 
 	client, err := torrent.NewClient(&tc)
