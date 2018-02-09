@@ -211,6 +211,8 @@ func (s *Server) Run(version string) error {
 					log.Println("load torrent", spec.DisplayName)
 				}
 				os.Remove(fn)
+				// TODO: wait for download and wait a time after
+				// and delete torrent
 			}
 		}()
 
