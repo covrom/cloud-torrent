@@ -85,7 +85,7 @@ func (me *trackerScraper) announce() (ret trackerAnnounceResult) {
 	me.t.cl.mu.Lock()
 	req := me.t.announceRequest()
 	me.t.cl.mu.Unlock()
-	res, err := tracker.AnnounceHost(urlToUse, &req, host)
+	res, err := tracker.AnnounceHost(me.t.cl.config.HTTP, me.t.cl.config.HTTPUserAgent, urlToUse, &req, host)
 	if err != nil {
 		ret.Err = err
 		return
@@ -111,7 +111,7 @@ func (me *trackerScraper) Run() {
 		me.lastAnnounce = ar
 		me.t.cl.mu.Unlock()
 
-		intervalChan := time.After(ar.Completed.Add(ar.Interval).Sub(time.Now()))
+		intervalChan := time.After(time.Until(ar.Completed.Add(ar.Interval)))
 
 		select {
 		case <-me.t.closed.LockedChan(&me.t.cl.mu):

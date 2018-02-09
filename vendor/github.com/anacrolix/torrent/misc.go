@@ -2,6 +2,7 @@ package torrent
 
 import (
 	"errors"
+	"net"
 
 	"github.com/anacrolix/torrent/metainfo"
 	pp "github.com/anacrolix/torrent/peer_protocol"
@@ -16,8 +17,28 @@ type request struct {
 	chunkSpec
 }
 
+func (r request) ToMsg(mt pp.MessageType) pp.Message {
+	return pp.Message{
+		Type:   mt,
+		Index:  r.Index,
+		Begin:  r.Begin,
+		Length: r.Length,
+	}
+}
+
 func newRequest(index, begin, length pp.Integer) request {
 	return request{index, chunkSpec{begin, length}}
+}
+
+func newRequestFromMessage(msg *pp.Message) request {
+	switch msg.Type {
+	case pp.Request, pp.Cancel, pp.Reject:
+		return newRequest(msg.Index, msg.Begin, msg.Length)
+	case pp.Piece:
+		return newRequest(msg.Index, msg.Begin, pp.Integer(len(msg.Piece)))
+	default:
+		panic(msg.Type)
+	}
 }
 
 // The size in bytes of a metadata extension piece.
@@ -84,4 +105,21 @@ func chunkIndexSpec(index int, pieceLength, chunkSize pp.Integer) chunkSpec {
 
 func connLessTrusted(l, r *connection) bool {
 	return l.netGoodPiecesDirtied() < r.netGoodPiecesDirtied()
+}
+
+// Convert a net.Addr to its compact IP representation. Either 4 or 16 bytes
+// per "yourip" field of http://www.bittorrent.org/beps/bep_0010.html.
+func addrCompactIP(addr net.Addr) (string, error) {
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return "", err
+	}
+	ip := net.ParseIP(host)
+	if v4 := ip.To4(); v4 != nil {
+		if len(v4) != 4 {
+			panic(v4)
+		}
+		return string(v4), nil
+	}
+	return string(ip.To16()), nil
 }

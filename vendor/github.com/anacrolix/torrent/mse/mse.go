@@ -175,20 +175,20 @@ func (h *handshake) postY(x *big.Int) error {
 	return h.postWrite(paddedLeft(y.Bytes(), 96))
 }
 
-func (h *handshake) establishS() (err error) {
+func (h *handshake) establishS() error {
 	x := newX()
 	h.postY(&x)
 	var b [96]byte
-	_, err = io.ReadFull(h.conn, b[:])
+	_, err := io.ReadFull(h.conn, b[:])
 	if err != nil {
-		return
+		return fmt.Errorf("error reading Y: %s", err)
 	}
 	var Y, S big.Int
 	Y.SetBytes(b[:])
 	S.Exp(&Y, &x, &p)
 	sBytes := S.Bytes()
 	copy(h.s[96-len(sBytes):96], sBytes)
-	return
+	return nil
 }
 
 func newPadLen() int64 {
@@ -238,7 +238,6 @@ func (h *handshake) finishWriting() {
 		h.writerCond.Wait()
 	}
 	h.writerMu.Unlock()
-	return
 }
 
 func (h *handshake) writer() {
@@ -546,16 +545,6 @@ func ReceiveHandshake(rw io.ReadWriter, skeys SecretKeyIter, selectCrypto func(u
 		chooseMethod: selectCrypto,
 	}
 	return h.Do()
-}
-
-func sliceIter(skeys [][]byte) SecretKeyIter {
-	return func(callback func([]byte) bool) {
-		for _, sk := range skeys {
-			if !callback(sk) {
-				break
-			}
-		}
-	}
 }
 
 // A function that given a function, calls it with secret keys until it
