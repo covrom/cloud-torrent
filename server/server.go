@@ -221,6 +221,8 @@ func (s *Server) Run(version string) error {
 							time.Sleep(time.Duration(c.DeleteAfterMinutes) * time.Minute)
 							log.Println("delete torrent", f)
 							s.engine.DeleteTorrent(ih)
+						} else if !ok {
+							return
 						}
 					}
 				}(fn, spec.InfoHash.HexString())
