@@ -21,7 +21,6 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 	"github.com/covrom/cloud-torrent/engine"
 	"github.com/covrom/cloud-torrent/static"
-	"github.com/fsnotify/fsnotify"
 	"github.com/jpillora/cookieauth"
 	"github.com/jpillora/requestlog"
 	"github.com/jpillora/scraper/scraper"
@@ -141,95 +140,40 @@ func (s *Server) Run(version string) error {
 	// start watching dirs
 	if len(c.WatchDirs) > 0 {
 
-		chftrn := make(chan string, 100)
-
-		watcher, err := fsnotify.NewWatcher()
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer watcher.Close()
-
 		for _, wtchr := range c.WatchDirs {
 
-			go func() {
+			go func(d string) {
 				for {
-					select {
-					case event := <-watcher.Events:
-						// log.Println("event:", event)
-						if event.Op&fsnotify.Create == fsnotify.Create {
-							if strings.HasSuffix(event.Name, ".torrent") {
-								log.Println("New file:", event.Name)
-								chftrn <- event.Name
-							}
-						}
-						// case err := <-watcher.Errors:
-						// 	log.Println("error:", err)
-					}
-				}
-			}()
+					f, err := os.Open(d)
+					if err != nil {
+						log.Println(err)
+					} else {
 
-			err = watcher.Add(wtchr)
-			if err != nil {
-				log.Fatal(err)
-			}
+						fls, err := f.Readdir(-1)
+						f.Close()
+						if err != nil {
+							log.Println(err)
+						} else {
+
+							for _, fi := range fls {
+								if !fi.IsDir() {
+									fn := fi.Name()
+									if strings.HasSuffix(fn, ".torrent") {
+										fn = filepath.Join(d, fn)
+										s.startTorrent(fn, c.DeleteAfterMinutes)
+									}
+								}
+							}
+
+						}
+					}
+
+					time.Sleep(3 * time.Second)
+				}
+			}(wtchr)
 
 			log.Printf("Watch a directory: %s\n", wtchr)
 		}
-		go func() {
-			for fn := range chftrn {
-				if !strings.HasSuffix(fn, ".torrent") {
-					continue
-				}
-				ftrn, err := os.Open(fn)
-				if err != nil {
-					log.Println(err)
-					if !(os.IsNotExist(err) || os.IsPermission(err)) {
-						go func(n string) {
-							time.Sleep(time.Second)
-							log.Println("retry", n)
-							chftrn <- n
-						}(fn)
-					}
-					continue
-				}
-				btorr, err := ioutil.ReadAll(ftrn)
-				ftrn.Close()
-				if err != nil {
-					log.Println(fn, err)
-					continue
-				}
-				reader := bytes.NewBuffer(btorr)
-				info, err := metainfo.Load(reader)
-				if err != nil {
-					log.Println(fn, err)
-					continue
-				}
-				spec := torrent.TorrentSpecFromMetaInfo(info)
-				if err := s.engine.NewTorrent(spec); err != nil {
-					log.Printf("Torrent error: %s\n", err)
-				} else {
-					log.Println("start torrent", spec.DisplayName)
-				}
-
-				go func(f, ih string) {
-					for {
-						time.Sleep(5 * time.Second)
-						t, ok := s.engine.GetTorrents()[ih]
-						if ok && t.Downloaded >= t.Size {
-							log.Println("done torrent", f)
-							os.Remove(f)
-							time.Sleep(time.Duration(c.DeleteAfterMinutes) * time.Minute)
-							log.Println("delete torrent", f)
-							s.engine.DeleteTorrent(ih)
-						} else if !ok {
-							return
-						}
-					}
-				}(fn, spec.InfoHash.HexString())
-				// TODO: change to s.listFiles, work after restart
-			}
-		}()
-
 	}
 
 	host := s.Host
@@ -286,6 +230,67 @@ func (s *Server) Run(version string) error {
 		return server.ListenAndServeTLS(s.CertPath, s.KeyPath)
 	}
 	return server.ListenAndServe()
+}
+
+func (s *Server) startTorrent(fn string, delAfter int) {
+
+	cntRetry := 5
+retry:
+	ftrn, err := os.Open(fn)
+	if err != nil {
+		log.Println(err)
+		if !(os.IsNotExist(err) || os.IsPermission(err)) {
+			time.Sleep(time.Second)
+			log.Println("retry", fn)
+			if cntRetry > 0 {
+				cntRetry--
+				goto retry
+			}
+		}
+		return
+	}
+
+	btorr, err := ioutil.ReadAll(ftrn)
+	ftrn.Close()
+	if err != nil {
+		log.Println(fn, err)
+		return
+	}
+
+	reader := bytes.NewBuffer(btorr)
+	info, err := metainfo.Load(reader)
+	if err != nil {
+		log.Println(fn, err)
+		return
+	}
+
+	spec := torrent.TorrentSpecFromMetaInfo(info)
+	hs := spec.InfoHash.HexString()
+	if _, ok := s.engine.GetTorrents()[hs]; ok {
+		return
+	}
+
+	if err := s.engine.NewTorrent(spec); err != nil {
+		log.Printf("Torrent error: %s\n", err)
+	} else {
+		log.Println("start torrent", spec.DisplayName)
+	}
+
+	go func(f, ih string, da int) {
+		for {
+			time.Sleep(5 * time.Second)
+			t, ok := s.engine.GetTorrents()[ih]
+			if ok && t.Downloaded >= t.Size {
+				log.Println("done torrent", f)
+				os.Remove(f)
+				time.Sleep(time.Duration(da) * time.Minute)
+				log.Println("delete torrent", f)
+				s.engine.DeleteTorrent(ih)
+			} else if !ok {
+				return
+			}
+		}
+	}(fn, hs, delAfter)
 }
 
 func (s *Server) reconfigure(c engine.Config) error {
