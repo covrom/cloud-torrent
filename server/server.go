@@ -143,6 +143,7 @@ func (s *Server) Run(version string) error {
 		for _, wtchr := range c.WatchDirs {
 
 			go func(d string) {
+				lastFiles := make(map[string]time.Time)
 				for {
 					f, err := os.Open(d)
 					if err != nil {
@@ -160,7 +161,11 @@ func (s *Server) Run(version string) error {
 									fn := fi.Name()
 									if strings.HasSuffix(fn, ".torrent") {
 										fn = filepath.Join(d, fn)
-										s.startTorrent(fn, c.DeleteAfterMinutes)
+										tm := lastFiles[fn]
+										if !fi.ModTime().Equal(tm) {
+											s.startTorrent(fn, c.DeleteAfterMinutes)
+											lastFiles[fn] = fi.ModTime()
+										}
 									}
 								}
 							}
@@ -168,7 +173,7 @@ func (s *Server) Run(version string) error {
 						}
 					}
 
-					time.Sleep(3 * time.Second)
+					time.Sleep(5 * time.Second)
 				}
 			}(wtchr)
 
