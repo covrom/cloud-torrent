@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/covrom/cloud-torrent/server"
 	"github.com/jpillora/opts"
@@ -13,8 +14,11 @@ func main() {
 	s := server.Server{
 		Title:      "Cloud Torrent",
 		Port:       3000,
-		ConfigPath: "cloud-torrent.json",
+		ConfigPath: "./cloud-torrent.json",
 	}
+
+	wd, _ := os.Getwd()
+	log.Println("Working path", wd)
 
 	o := opts.New(&s)
 	o.Version(VERSION)
