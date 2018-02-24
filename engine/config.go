@@ -7,7 +7,7 @@ type Config struct {
 	EnableUpload       bool
 	EnableSeeding      bool
 	IncomingPort       int
-	WatchDirs          []string
+	WatchDirs          string
 	UploadKbps         int
 	DownloadKbps       int
 	DeleteAfterMinutes int

@@ -140,7 +140,8 @@ func (s *Server) Run(version string) error {
 	// start watching dirs
 	if len(c.WatchDirs) > 0 {
 
-		for _, wtchr := range c.WatchDirs {
+		wdrs := strings.Split(c.WatchDirs, ";")
+		for _, wtchr := range wdrs {
 
 			go func(d string) {
 				lastFiles := make(map[string]time.Time)
@@ -175,7 +176,7 @@ func (s *Server) Run(version string) error {
 
 					time.Sleep(5 * time.Second)
 				}
-			}(wtchr)
+			}(strings.TrimSpace(wtchr))
 
 			log.Printf("Watch a directory: %s\n", wtchr)
 		}
