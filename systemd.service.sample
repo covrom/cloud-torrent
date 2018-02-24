@@ -1,0 +1,18 @@
+Unit]
+Description=cloud-torrent Daemon Service
+After=network.target
+
+[Service]
+LimitMEMLOCK=infinity
+LimitNOFILE=65535
+Type=simple
+User=user
+Group=nogroup
+WorkingDirectory=/usr/bin/cloud-torrent/
+Restart=always
+Environment=USER=user HOME=/usr/bin/cloud-torrent/
+ExecStart=/usr/bin/cloud-torrent/cloud-torrent -p 8000
+
+[Install]
+WantedBy=multi-user.target
+
