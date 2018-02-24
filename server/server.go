@@ -178,7 +178,7 @@ func (s *Server) Run(version string) error {
 				}
 			}(strings.TrimSpace(wtchr))
 
-			log.Printf("Watch a directory: %s\n", wtchr)
+			log.Printf("Watch a directory: %s\n", strings.TrimSpace(wtchr))
 		}
 	}
 
