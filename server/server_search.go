@@ -31,6 +31,10 @@ var fetches = 0
 var currentConfig, _ = normalize(defaultSearchConfig)
 
 func (s *Server) fetchSearchConfig() error {
+
+	// no need to update
+	return nil
+
 	resp, err := http.Get(searchConfigURL)
 	if err != nil {
 		return err
@@ -126,7 +130,7 @@ var defaultSearchConfig = []byte(`{
 	},
 	"abb": {
 		"name": "The Audiobook Bay",
-		"url": "http://audiobookbay.me/page/{{page:1}}?s={{query}}",
+		"url": "http://audiobookbay.nl/page/{{page:1}}?s={{query}}",
 		"list": "#content > div",
 		"result": {
 			"name":["div.postTitle > h2 > a","@title"],
@@ -137,7 +141,7 @@ var defaultSearchConfig = []byte(`{
 	},
 	"abb/item": {
 		"name": "The Audiobook Bay (Item)",
-		"url": "http://audiobookbay.me{{item}}",
+		"url": "http://audiobookbay.nl{{item}}",
 		"result": {
 			"infohash": "/td>([a-f0-9]+)</",
 			"tracker": "table tr td:nth-child(2)"
