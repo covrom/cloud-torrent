@@ -1,6 +1,7 @@
 package torrent
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -171,7 +172,7 @@ func TestUTPRawConn(t *testing.T) {
 	s, err := NewUtpSocket("udp", "")
 	require.NoError(t, err)
 	defer s.Close()
-	utpPeer, err := s.Dial(fmt.Sprintf("localhost:%d", missinggo.AddrPort(l.Addr())))
+	utpPeer, err := s.DialContext(context.Background(), "", fmt.Sprintf("localhost:%d", missinggo.AddrPort(l.Addr())))
 	require.NoError(t, err)
 	defer utpPeer.Close()
 	peer, err := net.ListenPacket("udp", ":0")
@@ -901,15 +902,6 @@ func TestPieceCompletedInStorageButNotClient(t *testing.T) {
 	})
 }
 
-func TestPrepareTrackerAnnounce(t *testing.T) {
-	cl := &Client{}
-	blocked, urlToUse, host, err := cl.prepareTrackerAnnounceUnlocked("http://localhost:1234/announce?herp")
-	require.NoError(t, err)
-	assert.False(t, blocked)
-	assert.EqualValues(t, "localhost:1234", host)
-	assert.EqualValues(t, "http://127.0.0.1:1234/announce?herp", urlToUse)
-}
-
 // Check that when the listen port is 0, all the protocols listened on have
 // the same port, and it isn't zero.
 func TestClientDynamicListenPortAllProtocols(t *testing.T) {
@@ -969,6 +961,8 @@ func totalConns(tts []*Torrent) (ret int) {
 }
 
 func TestSetMaxEstablishedConn(t *testing.T) {
+	ss := testutil.NewStatusServer(t)
+	defer ss.Close()
 	var tts []*Torrent
 	ih := testutil.GreetingMetaInfo().HashInfoBytes()
 	for i := range iter.N(3) {
@@ -977,18 +971,21 @@ func TestSetMaxEstablishedConn(t *testing.T) {
 		defer cl.Close()
 		tt, _ := cl.AddTorrentInfoHash(ih)
 		tt.SetMaxEstablishedConns(2)
-		testutil.ExportStatusWriter(cl, fmt.Sprintf("%d", i))
+		ss.HandleStatusWriter(cl, fmt.Sprintf("/%d", i))
 		tts = append(tts, tt)
 	}
 	addPeers := func() {
-		for i, tt := range tts {
-			for _, _tt := range tts[:i] {
+		for _, tt := range tts {
+			for _, _tt := range tts {
+				// if tt != _tt {
 				addClientPeer(tt, _tt.cl)
+				// }
 			}
 		}
 	}
 	waitTotalConns := func(num int) {
 		for totalConns(tts) != num {
+			addPeers()
 			time.Sleep(time.Millisecond)
 		}
 	}

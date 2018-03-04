@@ -4,8 +4,8 @@
 [[projects]]
   name = "github.com/NYTimes/gziphandler"
   packages = ["."]
-  revision = "d6f46609c7629af3a02d791a4666866eed3cbd3e"
-  version = "v1.0.0"
+  revision = "2600fb119af974220d3916a5916d6e31176aac1b"
+  version = "v1.0.1"
 
 [[projects]]
   name = "github.com/PuerkitoBio/goquery"
@@ -20,22 +20,25 @@
   version = "v0.4.2"
 
 [[projects]]
-  branch = "master"
   name = "github.com/StackExchange/wmi"
   packages = ["."]
   revision = "5d049714c4a64225c3c79a7cf7d02f7fb5b96338"
+  version = "1.0.0"
 
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/dht"
-  packages = [".","krpc"]
-  revision = "c4dc50660f6c11feeab5f338fc4ae22101203068"
+  packages = [
+    ".",
+    "krpc"
+  ]
+  revision = "0f2c5cd8da39f173f4337a5b40fa58f0b8a099d4"
 
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/go-libutp"
   packages = ["."]
-  revision = "895ab77663b356b8b20716b0b120277c00f2f31a"
+  revision = "9210d2a2d88831922092376c5623fb94249febed"
 
 [[projects]]
   branch = "master"
@@ -46,13 +49,32 @@
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/missinggo"
-  packages = [".","assert","bitmap","httptoo","inproc","iter","mime","orderedmap","perf","pproffd","prioritybitmap","pubsub","resource","slices","x"]
-  revision = "6a7517d124d96a4a22bc9e376dbf30fc5a7d72fd"
+  packages = [
+    ".",
+    "assert",
+    "bitmap",
+    "httptoo",
+    "inproc",
+    "iter",
+    "mime",
+    "orderedmap",
+    "perf",
+    "pproffd",
+    "prioritybitmap",
+    "pubsub",
+    "resource",
+    "slices",
+    "x"
+  ]
+  revision = "f32f2dc367fb4fc0167b83145459f567abd59c49"
 
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/mmsg"
-  packages = [".","socket"]
+  packages = [
+    ".",
+    "socket"
+  ]
   revision = "16d9a5f35402e33c2fe396f1aa7de06f245fa62d"
 
 [[projects]]
@@ -64,14 +86,25 @@
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/torrent"
-  packages = [".","bencode","iplist","logonce","metainfo","mmap_span","mse","peer_protocol","storage","tracker","util"]
-  revision = "924b916b2a5537953b67f7db07fd9d4b62661ea8"
+  packages = [
+    ".",
+    "bencode",
+    "iplist",
+    "logonce",
+    "metainfo",
+    "mmap_span",
+    "mse",
+    "peer_protocol",
+    "storage",
+    "tracker"
+  ]
+  revision = "5a7c4fc135eda0996079a46b43bc0ee8116d7093"
 
 [[projects]]
   branch = "master"
   name = "github.com/anacrolix/utp"
   packages = ["."]
-  revision = "b98b0567238c784541ef9782eb19134556e48e2e"
+  revision = "9e0e1d1d0572f5a09a669d4ea0372d8e8078dcc9"
 
 [[projects]]
   branch = "master"
@@ -80,10 +113,10 @@
   revision = "009166a695a2f516c749a26b4ac1f183d89aa336"
 
 [[projects]]
-  branch = "master"
   name = "github.com/andybalholm/cascadia"
   packages = ["."]
-  revision = "349dd0209470eabd9514242c688c403c0926d266"
+  revision = "901648c87902174f774fac311d7f176f8647bdaa"
+  version = "v1.0.0"
 
 [[projects]]
   name = "github.com/bkaradzic/go-lz4"
@@ -112,8 +145,8 @@
 [[projects]]
   name = "github.com/calmh/xdr"
   packages = ["."]
-  revision = "f9b9f8f7aa27725f5cabb699bd9099ca7ce09143"
-  version = "v2.0.1"
+  revision = "08e072f9cb164f943a92eb59f90f3abc64ac6e8f"
+  version = "v1.1.0"
 
 [[projects]]
   name = "github.com/davecgh/go-spew"
@@ -146,12 +179,6 @@
   version = "v1.2.0"
 
 [[projects]]
-  name = "github.com/fsnotify/fsnotify"
-  packages = ["."]
-  revision = "c2828203cd70a50dcccfb2761f8b1f8ceef9a8e9"
-  version = "v1.4.7"
-
-[[projects]]
   branch = "master"
   name = "github.com/glycerine/go-unsnap-stream"
   packages = ["."]
@@ -159,13 +186,20 @@
 
 [[projects]]
   name = "github.com/go-ole/go-ole"
-  packages = [".","oleutil"]
+  packages = [
+    ".",
+    "oleutil"
+  ]
   revision = "a41e3c4b706f6ae8dfbff342b06e40fa4d2d0506"
   version = "v1.2.1"
 
 [[projects]]
   name = "github.com/gogo/protobuf"
-  packages = ["gogoproto","proto","protoc-gen-gogo/descriptor"]
+  packages = [
+    "gogoproto",
+    "proto",
+    "protoc-gen-gogo/descriptor"
+  ]
   revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
   version = "v1.0.0"
 
@@ -190,7 +224,10 @@
 [[projects]]
   branch = "master"
   name = "github.com/hashicorp/golang-lru"
-  packages = [".","simplelru"]
+  packages = [
+    ".",
+    "simplelru"
+  ]
   revision = "0fb14efe8c47ae851c0034ed7a448854d3d34cf3"
 
 [[projects]]
@@ -206,10 +243,10 @@
   revision = "e0b3681851f13c5b048a46e5a9aa2441546a0902"
 
 [[projects]]
-  branch = "master"
   name = "github.com/jpillora/backoff"
   packages = ["."]
   revision = "8eab2debe79d12b7bd3d10653910df25fa9552ba"
+  version = "1.0.0"
 
 [[projects]]
   branch = "master"
@@ -250,7 +287,10 @@
 [[projects]]
   branch = "master"
   name = "github.com/jpillora/velox"
-  packages = [".","go"]
+  packages = [
+    ".",
+    "go"
+  ]
   revision = "1e1a1ed1f5ce64dfc6c6ce263f237b5df1d1f02b"
 
 [[projects]]
@@ -327,7 +367,12 @@
 
 [[projects]]
   name = "github.com/shirou/gopsutil"
-  packages = ["cpu","disk","internal/common","mem"]
+  packages = [
+    "cpu",
+    "disk",
+    "internal/common",
+    "mem"
+  ]
   revision = "c432be29ccce470088d07eea25b3ea7e68a8afbb"
   version = "v2.18.01"
 
@@ -345,7 +390,24 @@
 
 [[projects]]
   name = "github.com/syncthing/syncthing"
-  packages = ["lib/config","lib/dialer","lib/events","lib/fs","lib/logger","lib/nat","lib/osutil","lib/protocol","lib/rand","lib/sha256","lib/signature","lib/sync","lib/upgrade","lib/upnp","lib/util","lib/versioner"]
+  packages = [
+    "lib/config",
+    "lib/dialer",
+    "lib/events",
+    "lib/fs",
+    "lib/logger",
+    "lib/nat",
+    "lib/osutil",
+    "lib/protocol",
+    "lib/rand",
+    "lib/sha256",
+    "lib/signature",
+    "lib/sync",
+    "lib/upgrade",
+    "lib/upnp",
+    "lib/util",
+    "lib/versioner"
+  ]
   revision = "27d5b17096847d16d01421c30151969adda36628"
   version = "v0.14.44"
 
@@ -376,26 +438,49 @@
 [[projects]]
   branch = "master"
   name = "golang.org/x/crypto"
-  packages = ["pbkdf2","scrypt"]
-  revision = "5119cf507ed5294cc409c092980c7497ee5d6fd2"
+  packages = [
+    "pbkdf2",
+    "scrypt"
+  ]
+  revision = "91a49db82a88618983a78a06c1cbd4e00ab749ab"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/net"
-  packages = ["bpf","context","html","html/atom","internal/iana","internal/socket","ipv4","ipv6","proxy"]
-  revision = "f5dfe339be1d06f81b22525fe34671ee7d2c8904"
+  packages = [
+    "bpf",
+    "context",
+    "html",
+    "html/atom",
+    "internal/iana",
+    "internal/socket",
+    "ipv4",
+    "ipv6",
+    "proxy"
+  ]
+  revision = "22ae77b79946ea320088417e4d50825671d82d57"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/sys"
-  packages = ["unix","windows"]
-  revision = "37707fdb30a5b38865cfb95e5aab41707daec7fd"
+  packages = [
+    "unix",
+    "windows"
+  ]
+  revision = "dd2ff4accc098aceecb86b36eaa7829b2a17b1c9"
 
 [[projects]]
-  branch = "master"
   name = "golang.org/x/text"
-  packages = ["internal/gen","internal/triegen","internal/ucd","transform","unicode/cldr","unicode/norm"]
-  revision = "4e4a3210bb54bb31f6ab2cdca2edcc0b50c420c1"
+  packages = [
+    "internal/gen",
+    "internal/triegen",
+    "internal/ucd",
+    "transform",
+    "unicode/cldr",
+    "unicode/norm"
+  ]
+  revision = "f21a4dfb5e38f5895301dc265a8def02365cc3d0"
+  version = "v0.3.0"
 
 [[projects]]
   branch = "master"
@@ -406,6 +491,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "0c171504571cd9f7600bf6b2dc99cab2d17a198807bcfb55df70b01b1ecc8503"
+  inputs-digest = "323a657522883a17b6c44dc9063af142489dc79dc6f703f5249d1d1a7aa8590d"
   solver-name = "gps-cdcl"
   solver-version = 1

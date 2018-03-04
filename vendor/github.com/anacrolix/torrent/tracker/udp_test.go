@@ -12,12 +12,16 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/anacrolix/dht/krpc"
 	_ "github.com/anacrolix/envpprof"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/anacrolix/torrent/util"
 )
+
+var trackers = []string{
+	"udp://tracker.coppersurfer.tk:6969",
+	"udp://tracker.leechers-paradise.org:6969",
+}
 
 // Ensure net.IPs are stored big-endian, to match the way they're read from
 // the wire.
@@ -32,7 +36,7 @@ func TestNetIPv4Bytes(t *testing.T) {
 }
 
 func TestMarshalAnnounceResponse(t *testing.T) {
-	peers := util.CompactIPv4Peers{
+	peers := krpc.CompactIPv4NodeAddrs{
 		{[]byte{127, 0, 0, 1}, 2},
 		{[]byte{255, 0, 0, 3}, 4},
 	}
@@ -89,7 +93,7 @@ func TestAnnounceLocalhost(t *testing.T) {
 			{0xa3, 0x56, 0x41, 0x43, 0x74, 0x23, 0xe6, 0x26, 0xd9, 0x38, 0x25, 0x4a, 0x6b, 0x80, 0x49, 0x10, 0xa6, 0x67, 0xa, 0xc1}: {
 				Seeders:  1,
 				Leechers: 2,
-				Peers: []util.CompactPeer{
+				Peers: krpc.CompactIPv4NodeAddrs{
 					{[]byte{1, 2, 3, 4}, 5},
 					{[]byte{6, 7, 8, 9}, 10},
 				},
@@ -112,7 +116,10 @@ func TestAnnounceLocalhost(t *testing.T) {
 	go func() {
 		require.NoError(t, srv.serveOne())
 	}()
-	ar, err := Announce(defaultClient, defaultHTTPUserAgent, fmt.Sprintf("udp://%s/announce", srv.pc.LocalAddr().String()), &req)
+	ar, err := Announce{
+		TrackerUrl: fmt.Sprintf("udp://%s/announce", srv.pc.LocalAddr().String()),
+		Request:    req,
+	}.Do()
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, ar.Seeders)
 	assert.EqualValues(t, 2, len(ar.Peers))
@@ -128,7 +135,10 @@ func TestUDPTracker(t *testing.T) {
 	}
 	rand.Read(req.PeerId[:])
 	copy(req.InfoHash[:], []uint8{0xa3, 0x56, 0x41, 0x43, 0x74, 0x23, 0xe6, 0x26, 0xd9, 0x38, 0x25, 0x4a, 0x6b, 0x80, 0x49, 0x10, 0xa6, 0x67, 0xa, 0xc1})
-	ar, err := Announce(defaultClient, defaultHTTPUserAgent, "udp://tracker.openbittorrent.com:80/announce", &req)
+	ar, err := Announce{
+		TrackerUrl: trackers[0],
+		Request:    req,
+	}.Do()
 	// Skip any net errors as we don't control the server.
 	if _, ok := err.(net.Error); ok {
 		t.Skip(err)
@@ -152,19 +162,14 @@ func TestAnnounceRandomInfoHashThirdParty(t *testing.T) {
 	wg := sync.WaitGroup{}
 	success := make(chan bool)
 	fail := make(chan struct{})
-	for _, url := range []string{
-		"udp://tracker.openbittorrent.com:80/announce",
-		"udp://tracker.publicbt.com:80",
-		"udp://tracker.istole.it:6969",
-		"udp://tracker.ccc.de:80",
-		"udp://tracker.open.demonii.com:1337",
-		"udp://open.demonii.com:1337",
-		"udp://exodus.desync.com:6969",
-	} {
+	for _, url := range trackers {
 		wg.Add(1)
 		go func(url string) {
 			defer wg.Done()
-			resp, err := Announce(defaultClient, defaultHTTPUserAgent, url, &req)
+			resp, err := Announce{
+				TrackerUrl: url,
+				Request:    req,
+			}.Do()
 			if err != nil {
 				t.Logf("error announcing to %s: %s", url, err)
 				return
@@ -200,11 +205,13 @@ func TestURLPathOption(t *testing.T) {
 	}
 	defer conn.Close()
 	go func() {
-		_, err := Announce(defaultClient, defaultHTTPUserAgent, (&url.URL{
-			Scheme: "udp",
-			Host:   conn.LocalAddr().String(),
-			Path:   "/announce",
-		}).String(), &AnnounceRequest{})
+		_, err := Announce{
+			TrackerUrl: (&url.URL{
+				Scheme: "udp",
+				Host:   conn.LocalAddr().String(),
+				Path:   "/announce",
+			}).String(),
+		}.Do()
 		if err != nil {
 			defer conn.Close()
 		}

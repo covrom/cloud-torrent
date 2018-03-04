@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/dht"
+	"github.com/anacrolix/dht/krpc"
 	"github.com/anacrolix/log"
 	"github.com/anacrolix/missinggo"
 	"github.com/anacrolix/missinggo/bitmap"
@@ -74,13 +76,15 @@ type Torrent struct {
 	// Read-locked for using storage, and write-locked for Closing.
 	storageLock sync.RWMutex
 
+	// TODO: Only announce stuff is used?
 	metainfo metainfo.MetaInfo
 
 	// The info dict. nil if we don't have it (yet).
 	info  *metainfo.Info
 	files *[]*File
 
-	// Active peer connections, running message stream loops.
+	// Active peer connections, running message stream loops. TODO: Make this
+	// open (not-closed) connections only.
 	conns               map[*connection]struct{}
 	maxEstablishedConns int
 	// Set of addrs to which we're attempting to connect. Connections are
@@ -577,12 +581,12 @@ func (t *Torrent) writeStatus(w io.Writer) {
 	})
 	fmt.Fprintln(w)
 
-	fmt.Fprintf(w, "Trackers:\n")
+	fmt.Fprintf(w, "Enabled trackers:\n")
 	func() {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(tw, "    URL\tNext announce\tLast announce\n")
 		for _, ta := range slices.Sort(slices.FromMapElems(t.trackerAnnouncers), func(l, r *trackerScraper) bool {
-			return l.url < r.url
+			return l.u.String() < r.u.String()
 		}).([]*trackerScraper) {
 			fmt.Fprintf(tw, "    %s\n", ta.statusLine())
 		}
@@ -738,6 +742,18 @@ type Peer struct {
 	Source peerSource
 	// Peer is known to support encryption.
 	SupportsEncryption bool
+	pexPeerFlags
+}
+
+func (me *Peer) FromPex(na krpc.NodeAddr, fs pexPeerFlags) {
+	me.IP = append([]byte(nil), na.IP...)
+	me.Port = na.Port
+	me.Source = peerSourcePEX
+	// If they prefer encryption, they must support it.
+	if fs.Get(pexPrefersEncryption) {
+		me.SupportsEncryption = true
+	}
+	me.pexPeerFlags = fs
 }
 
 func (t *Torrent) pieceLength(piece int) pp.Integer {
@@ -1040,13 +1056,32 @@ func (t *Torrent) pieceCompletionChanged(piece int) {
 	t.updatePiecePriority(piece)
 }
 
+func (t *Torrent) numReceivedConns() (ret int) {
+	for c := range t.conns {
+		if c.Discovery == peerSourceIncoming {
+			ret++
+		}
+	}
+	return
+}
+
+func (t *Torrent) maxHalfOpen() int {
+	// Note that if we somehow exceed the maximum established conns, we want
+	// the negative value to have an effect.
+	establishedHeadroom := int64(t.maxEstablishedConns - len(t.conns))
+	extraIncoming := int64(t.numReceivedConns() - t.maxEstablishedConns/2)
+	// We want to allow some experimentation with new peers, and to try to
+	// upset an oversupply of received connections.
+	return int(min(max(5, extraIncoming)+establishedHeadroom, int64(t.cl.halfOpenLimit)))
+}
+
 func (t *Torrent) openNewConns() {
 	defer t.updateWantPeersEvent()
 	for len(t.peers) != 0 {
 		if !t.wantConns() {
 			return
 		}
-		if len(t.halfOpen) >= t.cl.halfOpenLimit {
+		if len(t.halfOpen) >= t.maxHalfOpen() {
 			return
 		}
 		var (
@@ -1269,21 +1304,35 @@ func (t *Torrent) seeding() bool {
 	return true
 }
 
-func (t *Torrent) startScrapingTracker(url string) {
-	if url == "" {
+func (t *Torrent) startScrapingTracker(_url string) {
+	if _url == "" {
 		return
 	}
-	if _, ok := t.trackerAnnouncers[url]; ok {
+	u, _ := url.Parse(_url)
+	if u.Scheme == "udp" {
+		u.Scheme = "udp4"
+		t.startScrapingTracker(u.String())
+		u.Scheme = "udp6"
+		t.startScrapingTracker(u.String())
+		return
+	}
+	if u.Scheme == "udp4" && (t.cl.config.DisableIPv4Peers || t.cl.config.DisableIPv4) {
+		return
+	}
+	if u.Scheme == "udp6" && t.cl.config.DisableIPv6 {
+		return
+	}
+	if _, ok := t.trackerAnnouncers[_url]; ok {
 		return
 	}
 	newAnnouncer := &trackerScraper{
-		url: url,
-		t:   t,
+		u: *u,
+		t: t,
 	}
 	if t.trackerAnnouncers == nil {
 		t.trackerAnnouncers = make(map[string]*trackerScraper)
 	}
-	t.trackerAnnouncers[url] = newAnnouncer
+	t.trackerAnnouncers[_url] = newAnnouncer
 	go newAnnouncer.Run()
 }
 
@@ -1311,6 +1360,7 @@ func (t *Torrent) announceRequest() tracker.AnnounceRequest {
 		PeerId:   t.cl.peerID,
 		InfoHash: t.infoHash,
 		Left:     t.bytesLeftAnnounce(),
+		Key:      t.cl.announceKey(),
 	}
 }
 

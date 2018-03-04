@@ -19,6 +19,7 @@ import (
 	"github.com/NYTimes/gziphandler"
 	"github.com/anacrolix/torrent"
 	"github.com/anacrolix/torrent/metainfo"
+	"github.com/anacrolix/torrent/storage"
 	"github.com/covrom/cloud-torrent/engine"
 	"github.com/covrom/cloud-torrent/static"
 	"github.com/jpillora/cookieauth"
@@ -92,7 +93,7 @@ func (s *Server) Run(version string) error {
 	}
 	//scraper
 	s.state.SearchProviders = s.scraper.Config //share scraper config
-	
+
 	go s.fetchSearchConfigLoop()
 
 	s.scraperh = http.StripPrefix("/search", s.scraper)
@@ -145,7 +146,17 @@ func (s *Server) Run(version string) error {
 		wdrs := strings.Split(c.WatchDirs, ";")
 		for _, wtchr := range wdrs {
 
-			go func(d string) {
+			dir := strings.TrimSpace(wtchr)
+
+			storageImpl := storage.NewFile(dir)
+
+			defer func(d string, sti storage.ClientImpl) {
+				if err := sti.Close(); err != nil {
+					log.Printf("error closing storage %s: %s", d, err)
+				}
+			}(dir, storageImpl)
+
+			go func(d string, sti storage.ClientImpl) {
 				lastFiles := make(map[string]time.Time)
 				for {
 					f, err := os.Open(d)
@@ -166,7 +177,7 @@ func (s *Server) Run(version string) error {
 										fn = filepath.Join(d, fn)
 										tm := lastFiles[fn]
 										if !fi.ModTime().Equal(tm) {
-											s.startTorrent(fn, c.DeleteAfterMinutes)
+											s.startTorrent(fn, sti, c.DeleteAfterMinutes)
 											lastFiles[fn] = fi.ModTime()
 										}
 									}
@@ -178,9 +189,9 @@ func (s *Server) Run(version string) error {
 
 					time.Sleep(5 * time.Second)
 				}
-			}(strings.TrimSpace(wtchr))
+			}(dir, storageImpl)
 
-			log.Printf("Watch a directory: %s\n", strings.TrimSpace(wtchr))
+			log.Printf("Watch a directory: %s\n", dir)
 		}
 	}
 
@@ -240,7 +251,7 @@ func (s *Server) Run(version string) error {
 	return server.ListenAndServe()
 }
 
-func (s *Server) startTorrent(fn string, delAfter int) {
+func (s *Server) startTorrent(fn string, sti storage.ClientImpl, delAfter int) {
 
 	cntRetry := 5
 retry:
@@ -277,6 +288,8 @@ retry:
 	if _, ok := s.engine.GetTorrents()[hs]; ok {
 		return
 	}
+
+	spec.Storage = sti
 
 	if err := s.engine.NewTorrent(spec); err != nil {
 		log.Printf("Torrent error: %s\n", err)

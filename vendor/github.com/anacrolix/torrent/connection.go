@@ -28,7 +28,7 @@ import (
 type peerSource string
 
 const (
-	peerSourceTracker         = "T" // It's the default.
+	peerSourceTracker         = "Tr"
 	peerSourceIncoming        = "I"
 	peerSourceDHTGetPeers     = "Hg"
 	peerSourceDHTAnnouncePeer = "Ha"
@@ -46,7 +46,7 @@ type connection struct {
 	r io.Reader
 	// True if the connection is operating over MSE obfuscation.
 	headerEncrypted bool
-	cryptoMethod    uint32
+	cryptoMethod    mse.CryptoMethod
 	Discovery       peerSource
 	uTP             bool
 	closed          missinggo.Event
@@ -180,7 +180,7 @@ func (cn *connection) connectionFlags() (ret string) {
 	}
 	ret += string(cn.Discovery)
 	if cn.uTP {
-		c('T')
+		c('U')
 	}
 	return
 }
@@ -314,29 +314,6 @@ func (cn *connection) requestedMetadataPiece(index int) bool {
 	return index < len(cn.metadataRequests) && cn.metadataRequests[index]
 }
 
-func clamp(min, value, max int64) int64 {
-	if min > max {
-		panic("harumph")
-	}
-	if value < min {
-		value = min
-	}
-	if value > max {
-		value = max
-	}
-	return value
-}
-
-func max(as ...int64) int64 {
-	ret := as[0]
-	for _, a := range as[1:] {
-		if a > ret {
-			ret = a
-		}
-	}
-	return ret
-}
-
 // The actual value to use as the maximum outbound requests.
 func (cn *connection) nominalMaxRequests() (ret int) {
 	return int(clamp(1, int64(cn.PeerMaxRequests), max(64, cn.stats.ChunksReadUseful-(cn.stats.ChunksRead-cn.stats.ChunksReadUseful))))
@@ -420,9 +397,11 @@ func (cn *connection) request(r request, mw messageWriter) bool {
 	if !cn.PeerHasPiece(r.Index.Int()) {
 		panic("requesting piece peer doesn't have")
 	}
-	cn.requests[r] = struct{}{}
 	if _, ok := cn.t.conns[cn]; !ok {
 		panic("requesting but not in active conns")
+	}
+	if cn.closed.IsSet() {
+		panic("requesting when connection is closed")
 	}
 	if cn.PeerChoked {
 		if cn.peerAllowedFast.Get(int(r.Index)) {
@@ -431,6 +410,7 @@ func (cn *connection) request(r request, mw messageWriter) bool {
 			panic("requesting while choked and not allowed fast")
 		}
 	}
+	cn.requests[r] = struct{}{}
 	cn.t.pendingRequests[r]++
 	return mw(pp.Message{
 		Type:   pp.Request,
@@ -960,7 +940,14 @@ func (c *connection) onReadRequest(r request) error {
 
 // Processes incoming bittorrent messages. The client lock is held upon entry
 // and exit. Returning will end the connection.
-func (c *connection) mainReadLoop() error {
+func (c *connection) mainReadLoop() (err error) {
+	defer func() {
+		if err != nil {
+			torrent.Add("connection.mainReadLoop returned with error", 1)
+		} else {
+			torrent.Add("connection.mainReadLoop returned with no error", 1)
+		}
+	}()
 	t := c.t
 	cl := t.cl
 
@@ -970,10 +957,7 @@ func (c *connection) mainReadLoop() error {
 		Pool:      t.chunkPool,
 	}
 	for {
-		var (
-			msg pp.Message
-			err error
-		)
+		var msg pp.Message
 		func() {
 			cl.mu.Unlock()
 			defer cl.mu.Lock()
@@ -1142,6 +1126,8 @@ func (c *connection) onReadExtendedMsg(id byte, payload []byte) (err error) {
 		return nil
 	case pexExtendedId:
 		if cl.config.DisablePEX {
+			// TODO: Maybe close the connection. Check that we're not
+			// advertising that we support PEX if it's disabled.
 			return nil
 		}
 		var pexMsg peerExchangeMessage
@@ -1149,25 +1135,8 @@ func (c *connection) onReadExtendedMsg(id byte, payload []byte) (err error) {
 		if err != nil {
 			return fmt.Errorf("error unmarshalling PEX message: %s", err)
 		}
-		go func() {
-			cl.mu.Lock()
-			t.addPeers(func() (ret []Peer) {
-				for i, cp := range pexMsg.Added {
-					p := Peer{
-						IP:     make([]byte, 4),
-						Port:   cp.Port,
-						Source: peerSourcePEX,
-					}
-					if i < len(pexMsg.AddedFlags) && pexMsg.AddedFlags[i]&0x01 != 0 {
-						p.SupportsEncryption = true
-					}
-					missinggo.CopyExact(p.IP, cp.IP[:])
-					ret = append(ret, p)
-				}
-				return
-			}())
-			cl.mu.Unlock()
-		}()
+		torrent.Add("pex added6 peers received", int64(len(pexMsg.Added6)))
+		t.addPeers(pexMsg.AddedPeers())
 		return nil
 	default:
 		return fmt.Errorf("unexpected extended message ID: %v", id)
@@ -1394,6 +1363,9 @@ func (c *connection) deleteRequest(r request) bool {
 func (c *connection) deleteAllRequests() {
 	for r := range c.requests {
 		c.deleteRequest(r)
+	}
+	if len(c.requests) != 0 {
+		panic(len(c.requests))
 	}
 	// for c := range c.t.conns {
 	// 	c.tickleWriter()

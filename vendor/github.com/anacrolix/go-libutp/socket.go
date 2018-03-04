@@ -7,8 +7,8 @@ import "C"
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
-	"sync/atomic"
 	"time"
 
 	"github.com/anacrolix/missinggo/inproc"
@@ -79,7 +79,8 @@ func (s *Socket) onLibSocketDestroyed(ls *C.utp_socket) {
 
 func (s *Socket) newConn(us *C.utp_socket) *Conn {
 	c := &Conn{
-		s: us,
+		s:         us,
+		localAddr: s.pc.LocalAddr(),
 	}
 	c.cond.L = &mu
 	s.conns[us] = c
@@ -143,6 +144,8 @@ func (s *Socket) packetReader() {
 			continue
 		}
 		consecutiveErrors = 0
+		expMap.Add("successful mmsg receive calls", 1)
+		expMap.Add("received messages", int64(n))
 		func() {
 			mu.Lock()
 			defer mu.Unlock()
@@ -162,12 +165,8 @@ func (s *Socket) packetReader() {
 	}
 }
 
-var reads int64
-
 func (s *Socket) processReceivedMessage(b []byte, addr net.Addr) (utp bool) {
 	sa, sal := netAddrToLibSockaddr(addr)
-	atomic.AddInt64(&reads, 1)
-	// log.Printf("received %d bytes, %d packets", n, reads)
 	ret := C.utp_process_udp(s.ctx, (*C.byte)(&b[0]), C.size_t(len(b)), sa, sal)
 	switch ret {
 	case 1:
@@ -239,11 +238,13 @@ func (s *Socket) DialTimeout(addr string, timeout time.Duration) (net.Conn, erro
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	return s.DialContext(ctx, addr)
+	return s.DialContext(ctx, "", addr)
 }
 
-func (s *Socket) resolveAddr(addr string) (net.Addr, error) {
-	n := s.Addr().Network()
+func (s *Socket) resolveAddr(n, addr string) (net.Addr, error) {
+	if n == "" {
+		n = s.Addr().Network()
+	}
 	switch n {
 	case "inproc":
 		return inproc.ResolveAddr(n, addr)
@@ -252,10 +253,11 @@ func (s *Socket) resolveAddr(addr string) (net.Addr, error) {
 	}
 }
 
-func (s *Socket) DialContext(ctx context.Context, addr string) (net.Conn, error) {
-	ua, err := s.resolveAddr(addr)
+// Passing an empty network will use the network of the Socket's listener.
+func (s *Socket) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	ua, err := s.resolveAddr(network, addr)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error resolving address: %v", err)
 	}
 	sa, sl := netAddrToLibSockaddr(ua)
 	mu.Lock()
@@ -265,6 +267,7 @@ func (s *Socket) DialContext(ctx context.Context, addr string) (net.Conn, error)
 	}
 	c := s.newConn(C.utp_create_socket(s.ctx))
 	C.utp_connect(c.s, sa, sl)
+	c.setRemoteAddr()
 	err = c.waitForConnect(ctx)
 	if err != nil {
 		c.close()
