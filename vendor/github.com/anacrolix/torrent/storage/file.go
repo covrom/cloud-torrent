@@ -192,9 +192,9 @@ func (fst fileTorrentImplIO) WriteAt(p []byte, off int64) (n int, err error) {
 			n1 = int(fi.Length - off)
 		}
 		name := fst.fts.fileInfoName(fi)
-		os.MkdirAll(filepath.Dir(name), 0770)
+		os.MkdirAll(filepath.Dir(name), 0755)
 		var f *os.File
-		f, err = os.OpenFile(name, os.O_WRONLY|os.O_CREATE, 0660)
+		f, err = os.OpenFile(name, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {
 			return
 		}
