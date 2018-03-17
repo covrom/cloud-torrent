@@ -175,8 +175,10 @@ func (s *Server) Run(version string) error {
 									fn := fi.Name()
 									if strings.HasSuffix(fn, ".torrent") {
 										fn = filepath.Join(d, fn)
-										tm := lastFiles[fn]
-										if !fi.ModTime().Equal(tm) {
+										_, ok := lastFiles[fn]
+										// tm := lastFiles[fn]
+										// if !fi.ModTime().Equal(tm) {
+										if !ok {
 											s.startTorrent(fn, sti, c.DeleteAfterMinutes)
 											lastFiles[fn] = fi.ModTime()
 										}
@@ -301,7 +303,7 @@ retry:
 		for {
 			time.Sleep(5 * time.Second)
 			t, ok := s.engine.GetTorrents()[ih]
-			if ok && t.Downloaded >= t.Size {
+			if ok && ((t.Downloaded >= t.Size) || t.Dropped || !t.Started) {
 				log.Println("done torrent", f)
 				os.Remove(f)
 				time.Sleep(time.Duration(da) * time.Minute)

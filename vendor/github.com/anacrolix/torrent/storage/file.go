@@ -107,7 +107,7 @@ func CreateNativeZeroLengthFiles(info *metainfo.Info, dir string) (err error) {
 			continue
 		}
 		name := filepath.Join(append([]string{dir, info.Name}, fi.Path...)...)
-		os.MkdirAll(filepath.Dir(name), 0750)
+		os.MkdirAll(filepath.Dir(name), 0755)
 		var f io.Closer
 		f, err = os.Create(name)
 		if err != nil {
