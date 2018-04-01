@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"sync"
 	"time"
 
 	"github.com/anacrolix/torrent"
 )
 
 type Torrent struct {
+	mu sync.RWMutex
 	//anacrolix/torrent
 	InfoHash   string
 	Name       string
@@ -35,7 +37,24 @@ type File struct {
 	f       torrent.File
 }
 
+func (torrent *Torrent) SyncCopy() *Torrent {
+	torrent.mu.RLock()
+	defer torrent.mu.RUnlock()
+	rv := new(Torrent)
+	*rv = *torrent
+	rv.Files = make([]*File, len(torrent.Files))
+	for i, v := range torrent.Files {
+		f := new(File)
+		*f = *v
+		rv.Files[i] = f
+	}
+	return rv
+}
+
 func (torrent *Torrent) Update(t *torrent.Torrent) {
+	torrent.mu.Lock()
+	defer torrent.mu.Unlock()
+
 	torrent.Name = t.Name()
 	torrent.Loaded = t.Info() != nil
 	if torrent.Loaded {

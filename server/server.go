@@ -156,7 +156,7 @@ func (s *Server) Run(version string) error {
 				}
 			}(dir, storageImpl)
 
-			go func(d string, sti storage.ClientImpl) {
+			go func(d string, sti storage.ClientImpl, delmin int) {
 				lastFiles := make(map[string]time.Time)
 				for {
 					f, err := os.Open(d)
@@ -165,7 +165,6 @@ func (s *Server) Run(version string) error {
 					} else {
 
 						fls, err := f.Readdir(-1)
-						f.Close()
 						if err != nil {
 							log.Println(err)
 						} else {
@@ -179,7 +178,7 @@ func (s *Server) Run(version string) error {
 										// tm := lastFiles[fn]
 										// if !fi.ModTime().Equal(tm) {
 										if !ok {
-											s.startTorrent(fn, sti, c.DeleteAfterMinutes)
+											s.startTorrent(fn, sti, delmin)
 											lastFiles[fn] = fi.ModTime()
 										}
 									}
@@ -187,11 +186,12 @@ func (s *Server) Run(version string) error {
 							}
 
 						}
+						f.Close()
 					}
 
 					time.Sleep(5 * time.Second)
 				}
-			}(dir, storageImpl)
+			}(dir, storageImpl, c.DeleteAfterMinutes)
 
 			log.Printf("Watch a directory: %s\n", dir)
 		}
@@ -302,7 +302,7 @@ retry:
 	go func(f, ih string, da int) {
 		for {
 			time.Sleep(5 * time.Second)
-			t, ok := s.engine.GetTorrents()[ih]
+			t, ok := s.engine.GetLocalCacheTorrent(ih)
 			if ok && ((t.Downloaded >= t.Size) || t.Dropped || !t.Started) {
 				log.Println("done torrent", f)
 				os.Remove(f)

@@ -23,6 +23,7 @@ type Engine struct {
 	client   *torrent.Client
 	config   Config
 	ts       map[string]*Torrent
+	tsmu     sync.RWMutex
 }
 
 func New() *Engine {
@@ -34,7 +35,7 @@ func (e *Engine) Config() Config {
 }
 
 func (e *Engine) AddClientOnClose(f func()) {
-	
+
 }
 
 func (e *Engine) Configure(c Config) error {
@@ -117,15 +118,34 @@ func (e *Engine) GetTorrents() map[string]*Torrent {
 	for _, tt := range e.client.Torrents() {
 		e.upsertTorrent(tt)
 	}
-	return e.ts
+	ets := make(map[string]*Torrent)
+	e.tsmu.RLock()
+	for k, v := range e.ts {
+		ets[k] = v.SyncCopy()
+	}
+	e.tsmu.RUnlock()
+	return ets
+}
+
+func (e *Engine) GetLocalCacheTorrent(ih string) (*Torrent, bool) {
+	e.tsmu.RLock()
+	defer e.tsmu.RUnlock()
+	if t, ok := e.ts[ih]; ok {
+		return t.SyncCopy(), true
+	}
+	return nil, false
 }
 
 func (e *Engine) upsertTorrent(tt *torrent.Torrent) *Torrent {
 	ih := tt.InfoHash().HexString()
+	e.tsmu.RLock()
 	torrent, ok := e.ts[ih]
+	e.tsmu.RUnlock()
 	if !ok {
 		torrent = &Torrent{InfoHash: ih}
+		e.tsmu.Lock()
 		e.ts[ih] = torrent
+		e.tsmu.Unlock()
 	}
 	//update torrent fields using underlying torrent
 	torrent.Update(tt)
@@ -137,7 +157,9 @@ func (e *Engine) getTorrent(infohash string) (*Torrent, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.tsmu.RLock()
 	t, ok := e.ts[ih.HexString()]
+	e.tsmu.RUnlock()
 	if !ok {
 		return t, fmt.Errorf("Missing torrent %x", ih)
 	}
@@ -204,7 +226,9 @@ func (e *Engine) DeleteTorrent(infohash string) error {
 		return err
 	}
 	os.Remove(filepath.Join(e.cacheDir, infohash+".torrent"))
+	e.tsmu.Lock()
 	delete(e.ts, t.InfoHash)
+	e.tsmu.Unlock()
 	ih, _ := str2ih(infohash)
 	if tt, ok := e.client.Torrent(ih); ok {
 		tt.Drop()
