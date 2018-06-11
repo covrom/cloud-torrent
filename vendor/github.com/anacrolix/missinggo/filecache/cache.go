@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	dirPerm  = 0755
-	filePerm = 0644
+	dirPerm  = 0775
+	filePerm = 0775
 )
 
 type Cache struct {

@@ -12,7 +12,7 @@ func WriteNodesToFile(ns []krpc.NodeInfo, fileName string) (err error) {
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(fileName, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0775)
 	if err != nil {
 		return
 	}

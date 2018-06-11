@@ -25,7 +25,7 @@ func (me *osFileInstance) Get() (ret io.ReadCloser, err error) {
 }
 
 func (me *osFileInstance) Put(r io.Reader) (err error) {
-	f, err := os.OpenFile(me.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(me.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0775)
 	if err != nil {
 		return
 	}
@@ -44,7 +44,7 @@ func (me *osFileInstance) ReadAt(b []byte, off int64) (n int, err error) {
 }
 
 func (me *osFileInstance) WriteAt(b []byte, off int64) (n int, err error) {
-	f, err := os.OpenFile(me.path, os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(me.path, os.O_CREATE|os.O_WRONLY, 0775)
 	if err != nil {
 		return
 	}
