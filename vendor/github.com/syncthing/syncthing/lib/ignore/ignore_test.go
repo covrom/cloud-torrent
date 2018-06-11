@@ -186,7 +186,6 @@ func TestBadPatterns(t *testing.T) {
 		"**/[",
 		"#include nonexistent",
 		"#include .stignore",
-		"!#include makesnosense",
 	}
 
 	for _, pat := range badPatterns {
@@ -928,5 +927,96 @@ func TestDuplicateLines(t *testing.T) {
 
 	if patsLen != len(pats.patterns) {
 		t.Fatalf("Parsed patterns differ when manually removing duplicate lines")
+	}
+}
+
+func TestIssue4680(t *testing.T) {
+	stignore := `
+	#snapshot
+	`
+
+	testcases := []struct {
+		file    string
+		matches bool
+	}{
+		{"#snapshot", true},
+		{"#snapshot/foo", true},
+	}
+
+	pats := New(fs.NewFilesystem(fs.FilesystemTypeBasic, "."), WithCache(true))
+	err := pats.Parse(bytes.NewBufferString(stignore), ".stignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range testcases {
+		res := pats.Match(tc.file).IsIgnored()
+		if res != tc.matches {
+			t.Errorf("Matches(%q) == %v, expected %v", tc.file, res, tc.matches)
+		}
+	}
+}
+
+func TestIssue4689(t *testing.T) {
+	stignore := `// orig`
+
+	pats := New(fs.NewFilesystem(fs.FilesystemTypeBasic, "."), WithCache(true))
+	err := pats.Parse(bytes.NewBufferString(stignore), ".stignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if lines := pats.Lines(); len(lines) != 1 || lines[0] != "// orig" {
+		t.Fatalf("wrong lines parsing original comment:\n%q", lines)
+	}
+
+	stignore = `// new`
+
+	err = pats.Parse(bytes.NewBufferString(stignore), ".stignore")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if lines := pats.Lines(); len(lines) != 1 || lines[0] != "// new" {
+		t.Fatalf("wrong lines parsing changed comment:\n%v", lines)
+	}
+}
+
+func TestIssue4901(t *testing.T) {
+	dir, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.RemoveAll(dir)
+
+	stignore := `
+	#include unicorn-lazor-death
+	puppy
+	`
+
+	if err := ioutil.WriteFile(filepath.Join(dir, ".stignore"), []byte(stignore), 0777); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	pats := New(fs.NewFilesystem(fs.FilesystemTypeBasic, dir), WithCache(true))
+	// Cache does not suddenly make the load succeed.
+	for i := 0; i < 2; i++ {
+		err := pats.Load(".stignore")
+		if err == nil {
+			t.Fatalf("expected an error")
+		}
+		if fs.IsNotExist(err) {
+			t.Fatalf("unexpected error type")
+		}
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(dir, "unicorn-lazor-death"), []byte(" "), 0777); err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	err = pats.Load(".stignore")
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err.Error())
 	}
 }

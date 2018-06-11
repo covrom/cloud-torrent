@@ -1,15 +1,32 @@
 package roaring
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/willf/bitset"
 	"log"
 	"math"
 	"math/rand"
 	"strconv"
 	"testing"
 	"unsafe"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/willf/bitset"
 )
+
+func TestRoaringIntervalCheck(t *testing.T) {
+	r := BitmapOf(1, 2, 3, 1000)
+	rangeb := New()
+	rangeb.AddRange(10, 1000+1)
+
+	if !r.Intersects(rangeb) {
+		t.FailNow()
+	}
+	rangeb2 := New()
+	rangeb2.AddRange(10, 1000)
+	if r.Intersects(rangeb2) {
+		t.FailNow()
+	}
+
+}
 
 func TestRoaringRangeEnd(t *testing.T) {
 	r := New()
@@ -1453,6 +1470,42 @@ func TestXORtest4(t *testing.T) {
 	//need to add the massives
 }
 
+func TestNextMany(t *testing.T) {
+	Convey("NextMany test", t, func() {
+		count := 70000
+		for _, gap := range []uint32{1, 8, 32, 128} {
+			expected := make([]uint32, count)
+			{
+				v := uint32(0)
+				for i, _ := range expected {
+					expected[i] = v
+					v += gap
+				}
+			}
+			bm := BitmapOf(expected...)
+			for _, bufSize := range []int{1, 64, 4096, count} {
+				buf := make([]uint32, bufSize)
+				it := bm.ManyIterator()
+				cur := 0
+				for n := it.NextMany(buf); n != 0; n = it.NextMany(buf) {
+					// much faster tests... (10s -> 5ms)
+					if cur+n > count {
+						So(cur+n, ShouldBeLessThanOrEqualTo, count)
+					}
+					for i, v := range buf[:n] {
+						// much faster tests...
+						if v != expected[cur+i] {
+							So(v, ShouldEqual, expected[cur+i])
+						}
+					}
+					cur += n
+				}
+				So(cur, ShouldEqual, count)
+			}
+		}
+	})
+}
+
 func TestBigRandom(t *testing.T) {
 	Convey("randomTest", t, func() {
 		rTest(15)
@@ -1698,6 +1751,36 @@ func TestFlipBigA(t *testing.T) {
 	})
 }
 
+func TestNextManyOfAddRangeAcrossContainers(t *testing.T) {
+	Convey("NextManyOfAddRangeAcrossContainers ", t, func() {
+		rb := NewBitmap()
+		rb.AddRange(65530, 65540)
+		expectedCard := 10
+		expected := []uint32{65530, 65531, 65532, 65533, 65534, 65535, 65536, 65537, 65538, 65539, 0}
+
+		// test where all values can be returned in a single buffer
+		it := rb.ManyIterator()
+		buf := make([]uint32, 11)
+		n := it.NextMany(buf)
+		So(n, ShouldEqual, expectedCard)
+		for i, e := range expected {
+			So(buf[i], ShouldEqual, e)
+		}
+
+		// test where buf is size 1, so many iterations
+		it = rb.ManyIterator()
+		n = 0
+		buf = make([]uint32, 1)
+		for i := 0; i < expectedCard; i++ {
+			n = it.NextMany(buf)
+			So(n, ShouldEqual, 1)
+			So(buf[0], ShouldEqual, expected[i])
+		}
+		n = it.NextMany(buf)
+		So(n, ShouldEqual, 0)
+	})
+}
+
 func TestDoubleAdd(t *testing.T) {
 	Convey("doubleadd ", t, func() {
 		rb := NewBitmap()
@@ -1917,4 +2000,86 @@ func TestFlipVerySmall(t *testing.T) {
 		rbcard := rb.GetCardinality()
 		So(rbcard, ShouldEqual, 9)
 	})
+}
+
+func TestReverseIterator(t *testing.T) {
+	{
+		values := []uint32{0, 2, 15, 16, 31, 32, 33, 9999, MaxUint16, MaxUint32}
+		bm := New()
+		for n := 0; n < len(values); n++ {
+			bm.Add(values[n])
+		}
+		i := bm.ReverseIterator()
+		n := len(values) - 1
+		for i.HasNext() {
+			v := i.Next()
+			if values[n] != v {
+				t.Errorf("expected %d got %d", values[n], v)
+			}
+			n--
+		}
+	}
+	{
+		bm := New()
+		i := bm.ReverseIterator()
+		if i.HasNext() {
+			t.Error("expected HasNext() to be false")
+		}
+	}
+	{
+		bm := New()
+		bm.AddInt(0)
+		i := bm.ReverseIterator()
+		if !i.HasNext() {
+			t.Error("expected HasNext() to be true")
+		}
+		if i.Next() != 0 {
+			t.Error("expected 0")
+		}
+		if i.HasNext() {
+			t.Error("expected HasNext() to be false")
+		}
+	}
+	{
+		bm := New()
+		bm.AddInt(9999)
+		i := bm.ReverseIterator()
+		if !i.HasNext() {
+			t.Error("expected HasNext() to be true")
+		}
+		if i.Next() != 9999 {
+			t.Error("expected 9999")
+		}
+		if i.HasNext() {
+			t.Error("expected HasNext() to be false")
+		}
+	}
+	{
+		bm := New()
+		bm.AddInt(MaxUint16)
+		i := bm.ReverseIterator()
+		if !i.HasNext() {
+			t.Error("expected HasNext() to be true")
+		}
+		if i.Next() != MaxUint16 {
+			t.Error("expected MaxUint16")
+		}
+		if i.HasNext() {
+			t.Error("expected HasNext() to be false")
+		}
+	}
+	{
+		bm := New()
+		bm.Add(MaxUint32)
+		i := bm.ReverseIterator()
+		if !i.HasNext() {
+			t.Error("expected HasNext() to be true")
+		}
+		if i.Next() != MaxUint32 {
+			t.Error("expected MaxUint32")
+		}
+		if i.HasNext() {
+			t.Error("expected HasNext() to be false")
+		}
+	}
 }

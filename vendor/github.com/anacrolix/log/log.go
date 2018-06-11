@@ -50,6 +50,7 @@ func (l *Logger) AddValue(v interface{}) *Logger {
 	return l
 }
 
+// rename Log to allow other implementers
 func (l *Logger) Handle(m Msg) {
 	for v := range l.values {
 		m.AddValue(v)
@@ -95,7 +96,7 @@ func formatAttrs(values map[interface{}]struct{}, fields map[string][]interface{
 }
 
 func LineFormatter(msg Msg) []byte {
-	ret := []byte(fmt.Sprintf("%s, %v\n", msg.text, formatAttrs(msg.values, msg.fields)))
+	ret := []byte(fmt.Sprintf("%s: %s, %v\n", humanPc(msg.callers[0]), msg.text, formatAttrs(msg.values, msg.fields)))
 	if ret[len(ret)-1] != '\n' {
 		ret = append(ret, '\n')
 	}
@@ -107,11 +108,11 @@ func (me *StreamHandler) Emit(msg Msg) {
 }
 
 func Printf(format string, a ...interface{}) {
-	Default.Handle(Fmsg(format, a...))
+	Default.Handle(Fmsg(format, a...).Skip(1))
 }
 
 func Print(v ...interface{}) {
-	Default.Handle(Msg{text: fmt.Sprint(v...)})
+	Default.Handle(Str(fmt.Sprint(v...)).Skip(1))
 }
 
 func Call() Msg {

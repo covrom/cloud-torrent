@@ -11,26 +11,25 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/base64"
 	"flag"
+	"fmt"
 	"go/format"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 )
 
 var tpl = template.Must(template.New("assets").Parse(`package auto
 
-import (
-	"encoding/base64"
-)
+const Generated int64 = {{.Generated}}
 
 func Assets() map[string][]byte {
 	var assets = make(map[string][]byte, {{.Assets | len}})
 {{range $asset := .Assets}}
-	assets["{{$asset.Name}}"], _ = base64.StdEncoding.DecodeString("{{$asset.Data}}"){{end}}
+	assets["{{$asset.Name}}"] = {{$asset.Data}}{{end}}
 	return assets
 }
 
@@ -70,7 +69,7 @@ func walkerFor(basePath string) filepath.WalkFunc {
 			name, _ = filepath.Rel(basePath, name)
 			assets = append(assets, asset{
 				Name: filepath.ToSlash(name),
-				Data: base64.StdEncoding.EncodeToString(buf.Bytes()),
+				Data: fmt.Sprintf("%#v", buf.Bytes()), // "[]byte{0x00, 0x01, ...}"
 			})
 		}
 
@@ -79,7 +78,8 @@ func walkerFor(basePath string) filepath.WalkFunc {
 }
 
 type templateVars struct {
-	Assets []asset
+	Assets    []asset
+	Generated int64
 }
 
 func main() {
@@ -88,7 +88,8 @@ func main() {
 	filepath.Walk(flag.Arg(0), walkerFor(flag.Arg(0)))
 	var buf bytes.Buffer
 	tpl.Execute(&buf, templateVars{
-		Assets: assets,
+		Assets:    assets,
+		Generated: time.Now().Unix(),
 	})
 	bs, err := format.Source(buf.Bytes())
 	if err != nil {

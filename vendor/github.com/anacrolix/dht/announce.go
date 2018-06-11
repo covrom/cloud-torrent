@@ -137,10 +137,16 @@ func (a *Announce) gotNodeAddr(addr Addr) {
 func (a *Announce) contact(addr Addr) {
 	a.numContacted++
 	a.triedAddrs.Add([]byte(addr.String()))
-	if err := a.getPeers(addr); err != nil {
-		return
-	}
 	a.pending++
+	go func() {
+		err := a.getPeers(addr)
+		if err == nil {
+			return
+		}
+		a.mu.Lock()
+		a.transactionClosed()
+		a.mu.Unlock()
+	}()
 }
 
 func (a *Announce) maybeClose() {
@@ -176,7 +182,7 @@ func (a *Announce) getPeers(addr Addr) error {
 	defer a.server.mu.Unlock()
 	return a.server.getPeers(addr, a.infoHash, func(m krpc.Msg, err error) {
 		// Register suggested nodes closer to the target info-hash.
-		if m.R != nil {
+		if m.R != nil && m.SenderID() != nil {
 			expvars.Add("announce get_peers response nodes values", int64(len(m.R.Nodes)))
 			expvars.Add("announce get_peers response nodes6 values", int64(len(m.R.Nodes6)))
 			a.mu.Lock()

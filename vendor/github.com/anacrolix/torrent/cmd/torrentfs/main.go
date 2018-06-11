@@ -15,7 +15,6 @@ import (
 
 	"bazil.org/fuse"
 	fusefs "bazil.org/fuse/fs"
-	"github.com/anacrolix/dht"
 	_ "github.com/anacrolix/envpprof"
 	"github.com/anacrolix/tagflag"
 
@@ -87,15 +86,13 @@ func mainExitCode() int {
 	defer fuse.Unmount(args.MountDir)
 	// TODO: Think about the ramifications of exiting not due to a signal.
 	defer conn.Close()
-	client, err := torrent.NewClient(&torrent.Config{
+	cfg := torrent.Config{
 		DataDir:         args.DownloadDir,
 		DisableTrackers: args.DisableTrackers,
-		ListenAddr:      args.ListenAddr.String(),
 		NoUpload:        true, // Ensure that downloads are responsive.
-		DHTConfig: dht.ServerConfig{
-			StartingNodes: dht.GlobalBootstrapAddrs,
-		},
-	})
+	}
+	cfg.SetListenAddr(args.ListenAddr.String())
+	client, err := torrent.NewClient(&cfg)
 	if err != nil {
 		log.Print(err)
 		return 1

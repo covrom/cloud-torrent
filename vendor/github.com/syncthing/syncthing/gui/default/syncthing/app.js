@@ -21,6 +21,7 @@ syncthing.config(function ($httpProvider, $translateProvider, LocaleServiceProvi
     var deviceIDShort = metadata.deviceID.substr(0, 5);
     $httpProvider.defaults.xsrfHeaderName = 'X-CSRF-Token-' + deviceIDShort;
     $httpProvider.defaults.xsrfCookieName = 'CSRF-Token-' + deviceIDShort;
+    $httpProvider.useApplyAsync(true);
 
     // language and localisation
 
@@ -80,18 +81,6 @@ function folderList(m) {
     }
     l.sort(folderCompare);
     return l;
-}
-
-function decimals(val, num) {
-    var digits, decs;
-
-    if (val === 0) {
-        return 0;
-    }
-
-    digits = Math.floor(Math.log(Math.abs(val)) / Math.log(10));
-    decs = Math.max(0, num - digits);
-    return decs;
 }
 
 function isEmptyObject(obj) {

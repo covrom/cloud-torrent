@@ -94,7 +94,7 @@ type modelIntf interface {
 	CurrentFolderFile(folder string, file string) (protocol.FileInfo, bool)
 	CurrentGlobalFile(folder string, file string) (protocol.FileInfo, bool)
 	ResetFolder(folder string)
-	Availability(folder, file string, version protocol.Vector, block protocol.BlockInfo) []model.Availability
+	Availability(folder string, file protocol.FileInfo, block protocol.BlockInfo) []model.Availability
 	GetIgnores(folder string) ([]string, []string, error)
 	GetFolderVersions(folder string) (map[string][]versioner.FileVersion, error)
 	RestoreFolderVersions(folder string, versions map[string]time.Time) (map[string]string, error)
@@ -112,6 +112,7 @@ type modelIntf interface {
 	State(folder string) (string, time.Time, error)
 	UsageReportingStats(version int, preview bool) map[string]interface{}
 	PullErrors(folder string) ([]model.FileError, error)
+	WatchError(folder string) error
 }
 
 type configIntf interface {
@@ -733,6 +734,11 @@ func folderSummary(cfg configIntf, m modelIntf, folder string) (map[string]inter
 		}
 	}
 
+	err = m.WatchError(folder)
+	if err != nil {
+		res["watchError"] = err.Error()
+	}
+
 	return res, nil
 }
 
@@ -822,7 +828,7 @@ func (s *apiService) getDBFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	av := s.model.Availability(folder, file, protocol.Vector{}, protocol.BlockInfo{})
+	av := s.model.Availability(folder, gf, protocol.BlockInfo{})
 	sendJSON(w, map[string]interface{}{
 		"global":       jsonFileInfo(gf),
 		"local":        jsonFileInfo(lf),
@@ -976,7 +982,9 @@ func (s *apiService) postSystemErrorClear(w http.ResponseWriter, r *http.Request
 func (s *apiService) getSystemLog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since, err := time.Parse(time.RFC3339, q.Get("since"))
-	l.Debugln(err)
+	if err != nil {
+		l.Debugln(err)
+	}
 	sendJSON(w, map[string][]logger.Line{
 		"messages": s.systemLog.Since(since),
 	})
@@ -985,7 +993,9 @@ func (s *apiService) getSystemLog(w http.ResponseWriter, r *http.Request) {
 func (s *apiService) getSystemLogTxt(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since, err := time.Parse(time.RFC3339, q.Get("since"))
-	l.Debugln(err)
+	if err != nil {
+		l.Debugln(err)
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
 	for _, line := range s.systemLog.Since(since) {
@@ -1554,9 +1564,14 @@ func addressIsLocalhost(addr string) bool {
 		host = addr
 	}
 	switch strings.ToLower(host) {
-	case "127.0.0.1", "::1", "localhost":
+	case "localhost", "localhost.":
 		return true
 	default:
-		return false
+		ip := net.ParseIP(host)
+		if ip == nil {
+			// not an IP address
+			return false
+		}
+		return ip.IsLoopback()
 	}
 }

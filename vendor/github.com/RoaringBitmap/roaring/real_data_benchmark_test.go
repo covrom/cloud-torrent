@@ -137,9 +137,45 @@ func benchmarkRealDataAggregate(b *testing.B, aggregator func(b []*Bitmap) uint6
 	}
 }
 
+func BenchmarkRealDataNext(b *testing.B) {
+	benchmarkRealDataAggregate(b, func(bitmaps []*Bitmap) uint64 {
+		tot := uint64(0)
+		for _, b := range bitmaps {
+			it := b.Iterator()
+			for it.HasNext() {
+				tot += uint64(it.Next())
+			}
+		}
+		return tot
+	})
+}
+
+func BenchmarkRealDataNextMany(b *testing.B) {
+	benchmarkRealDataAggregate(b, func(bitmaps []*Bitmap) uint64 {
+		tot := uint64(0)
+		buf := make([]uint32, 4096)
+		for _, b := range bitmaps {
+			it := b.ManyIterator()
+			for n := it.NextMany(buf); n != 0; n = it.NextMany(buf) {
+				for _, v := range buf[:n] {
+					tot += uint64(v)
+				}
+			}
+		}
+		return tot
+	})
+}
+
 func BenchmarkRealDataParOr(b *testing.B) {
 	benchmarkRealDataAggregate(b, func(bitmaps []*Bitmap) uint64 {
 		return ParOr(0, bitmaps...).GetCardinality()
+		//return ParHeapOr(0, bitmaps...).GetCardinality()
+	})
+}
+
+func BenchmarkRealDataParHeapOr(b *testing.B) {
+	benchmarkRealDataAggregate(b, func(bitmaps []*Bitmap) uint64 {
+		return ParHeapOr(0, bitmaps...).GetCardinality()
 	})
 }
 

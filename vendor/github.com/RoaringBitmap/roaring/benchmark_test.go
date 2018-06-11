@@ -12,9 +12,71 @@ import (
 
 // BENCHMARKS, to run them type "go test -bench Benchmark -run -"
 
+// go test -bench BenchmarkOrs -benchmem -run -
+func BenchmarkOrs(b *testing.B) {
+
+	bms := []*Bitmap{}
+	maxCount := 50
+	domain := 100000000
+	bitmapCount := 100
+	for i := 0; i < bitmapCount; i++ {
+		newBm := NewBitmap()
+		count := rand.Intn(maxCount) + 5
+		for j := 0; j < count; j++ {
+			v := uint32(rand.Intn(domain))
+			newBm.Add(v)
+		}
+		bms = append(bms, newBm)
+	}
+	var twotwocard uint64
+	var fastcard uint64
+	var nextcard uint64
+
+	b.Run("two-by-two", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			newBm := NewBitmap()
+			for _, bm := range bms {
+				newBm.Or(bm)
+			}
+			twotwocard = newBm.GetCardinality()
+		}
+		b.StopTimer()
+	})
+
+	b.Run("fast", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			newBm := FastOr(bms...)
+			fastcard = newBm.GetCardinality()
+		}
+		b.StopTimer()
+	})
+
+	b.Run("next/add", func(b *testing.B) {
+		buf := make([]uint32, 100)
+		for n := 0; n < b.N; n++ {
+			newBm := NewBitmap()
+			for _, bm := range bms {
+				iter := bm.ManyIterator()
+				for vs := iter.NextMany(buf); vs != 0; vs = iter.NextMany(buf) {
+					newBm.AddMany(buf[:vs])
+				}
+			}
+			nextcard = newBm.GetCardinality()
+		}
+		b.StopTimer()
+	})
+	if fastcard != nextcard {
+		b.Fatalf("Cardinalities don't match: %d, %d", fastcard, nextcard)
+	}
+	if fastcard != twotwocard {
+		b.Fatalf("Cardinalities don't match: %d, %d", fastcard, twotwocard)
+	}
+}
+
 var Rb *Bitmap
 
 func BenchmarkNewBitmap(b *testing.B) {
+	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		Rb = New()
 	}
@@ -50,8 +112,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	fmt.Printf("\nHeapInUse %d\n", stats.HeapInuse)
-	fmt.Printf("HeapObjects %d\n", stats.HeapObjects)
+	b.Logf("HeapInUse: %d, HeapObjects: %d", stats.HeapInuse, stats.HeapObjects)
 	b.StartTimer()
 }
 
@@ -497,13 +558,100 @@ func BenchmarkEqualsClone(b *testing.B) {
 	}
 }
 
-func BenchmarkSequentialAdd(b *testing.B) {
-	for j := 0; j < b.N; j++ {
-		s := NewBitmap()
-		for i := 0; i < 10000000; i += 16 {
-			s.Add(uint32(i))
+// go test -bench BenchmarkNexts -benchmem -run -
+func BenchmarkNexts(b *testing.B) {
+
+	for _, gap := range []uint32{1, 2, 4, 8, 16, 32, 64, 256, 1024, 8096} {
+
+		rrs := make([]uint32, 500000)
+		v := uint32(0)
+		for i := range rrs {
+			rrs[i] = v
+			v += gap
+		}
+
+		bm := NewBitmap()
+		bm.AddMany(rrs)
+
+		var totnext uint64
+		var totnextmany uint64
+
+		density := float32(100) / float32(gap)
+
+		density_str := fmt.Sprintf("__%f%%", density)
+
+		b.Run("next"+density_str, func(b *testing.B) {
+			for n := 0; n < b.N; n++ {
+				totnext = 0
+				iter := bm.Iterator()
+				for iter.HasNext() {
+					v := iter.Next()
+					totnext += uint64(v)
+				}
+			}
+			b.StopTimer()
+		})
+
+		b.Run("nextmany"+density_str, func(b *testing.B) {
+			for n := 0; n < b.N; n++ {
+				totnextmany = 0
+				iter := bm.ManyIterator()
+				// worst case, in practice will reuse buffers across many roars
+				buf := make([]uint32, 4096)
+				for j := iter.NextMany(buf); j != 0; j = iter.NextMany(buf) {
+					for i := 0; i < j; i++ {
+						totnextmany += uint64(buf[i])
+					}
+				}
+			}
+			b.StopTimer()
+		})
+
+		if totnext != totnextmany {
+			b.Fatalf("Cardinalities don't match: %d, %d", totnext, totnextmany)
 		}
 	}
+}
+
+// go test -bench BenchmarkRLENexts -benchmem -run -
+func BenchmarkNextsRLE(b *testing.B) {
+
+	var totadd uint64
+	var totaddmany uint64
+
+	bm := NewBitmap()
+	bm.AddRange(0, 1000000)
+
+	b.Run("next", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			totadd = 0
+			iter := bm.Iterator()
+			for iter.HasNext() {
+				v := iter.Next()
+				totadd += uint64(v)
+			}
+		}
+		b.StopTimer()
+	})
+
+	b.Run("nextmany", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			totaddmany = 0
+			iter := bm.ManyIterator()
+			// worst case, in practice will reuse buffers across many roars
+			buf := make([]uint32, 2048)
+			for j := iter.NextMany(buf); j != 0; j = iter.NextMany(buf) {
+				for i := 0; i < j; i++ {
+					totaddmany += uint64(buf[i])
+				}
+			}
+		}
+		b.StopTimer()
+	})
+	if totadd != totaddmany {
+		b.Fatalf("Cardinalities don't match: %d, %d", totadd, totaddmany)
+	}
+
 }
 
 func BenchmarkXor(b *testing.B) {
@@ -547,5 +695,29 @@ func BenchmarkXorLopsided(b *testing.B) {
 
 	for j := 0; j < b.N; j++ {
 		s.Clone().Xor(x2)
+	}
+}
+
+func BenchmarkBitmapReuseWithoutClear(b *testing.B) {
+	for j := 0; j < b.N; j++ {
+		s := NewBitmap()
+		for i := 0; i < 100000; i++ {
+			s.Add(uint32(i * 4096))
+		}
+	}
+}
+
+func BenchmarkBitmapReuseWithClear(b *testing.B) {
+	s := NewBitmap()
+	for i := 0; i < 100000; i++ {
+		s.Add(uint32(i * 4096))
+	}
+	b.ResetTimer()
+
+	for j := 0; j < b.N; j++ {
+		s.Clear() // reuse the same bitmap
+		for i := 0; i < 100000; i++ {
+			s.Add(uint32(i * 4096))
+		}
 	}
 }
