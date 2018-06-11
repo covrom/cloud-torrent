@@ -10,15 +10,19 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"runtime"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/rand"
+	"github.com/syncthing/syncthing/lib/sha256"
 )
 
 const (
 	SyntheticDirectorySize = 128
-	HelloMessageMagic      = uint32(0x2EA7D90B)
+)
+
+var (
+	sha256OfEmptyBlock = sha256.Sum256(make([]byte, BlockSize))
+	HelloMessageMagic  = uint32(0x2EA7D90B)
 )
 
 func (m Hello) Magic() uint32 {
@@ -31,8 +35,8 @@ func (f FileInfo) String() string {
 		return fmt.Sprintf("Directory{Name:%q, Sequence:%d, Permissions:0%o, ModTime:%v, Version:%v, Deleted:%v, Invalid:%v, NoPermissions:%v}",
 			f.Name, f.Sequence, f.Permissions, f.ModTime(), f.Version, f.Deleted, f.Invalid, f.NoPermissions)
 	case FileInfoTypeFile:
-		return fmt.Sprintf("File{Name:%q, Sequence:%d, Permissions:0%o, ModTime:%v, Version:%v, Length:%d, Deleted:%v, Invalid:%v, NoPermissions:%v, BlockSize:%d, Blocks:%v}",
-			f.Name, f.Sequence, f.Permissions, f.ModTime(), f.Version, f.Size, f.Deleted, f.Invalid, f.NoPermissions, f.RawBlockSize, f.Blocks)
+		return fmt.Sprintf("File{Name:%q, Sequence:%d, Permissions:0%o, ModTime:%v, Version:%v, Length:%d, Deleted:%v, Invalid:%v, NoPermissions:%v, Blocks:%v}",
+			f.Name, f.Sequence, f.Permissions, f.ModTime(), f.Version, f.Size, f.Deleted, f.Invalid, f.NoPermissions, f.Blocks)
 	case FileInfoTypeSymlink, FileInfoTypeDeprecatedSymlinkDirectory, FileInfoTypeDeprecatedSymlinkFile:
 		return fmt.Sprintf("Symlink{Name:%q, Type:%v, Sequence:%d, Version:%v, Deleted:%v, Invalid:%v, NoPermissions:%v, SymlinkTarget:%q}",
 			f.Name, f.Type, f.Sequence, f.Version, f.Deleted, f.Invalid, f.NoPermissions, f.SymlinkTarget)
@@ -76,13 +80,6 @@ func (f FileInfo) FileSize() int64 {
 	return f.Size
 }
 
-func (f FileInfo) BlockSize() int {
-	if f.RawBlockSize == 0 {
-		return MinBlockSize
-	}
-	return int(f.RawBlockSize)
-}
-
 func (f FileInfo) FileName() string {
 	return f.Name
 }
@@ -98,11 +95,6 @@ func (f FileInfo) SequenceNo() int64 {
 // WinsConflict returns true if "f" is the one to choose when it is in
 // conflict with "other".
 func (f FileInfo) WinsConflict(other FileInfo) bool {
-	// If only one of the files is invalid, that one loses
-	if f.IsInvalid() != other.IsInvalid() {
-		return !f.IsInvalid()
-	}
-
 	// If a modification is in conflict with a delete, we pick the
 	// modification.
 	if !f.IsDeleted() && other.IsDeleted() {
@@ -125,74 +117,6 @@ func (f FileInfo) WinsConflict(other FileInfo) bool {
 	return f.Version.Compare(other.Version) == ConcurrentGreater
 }
 
-func (f FileInfo) IsEmpty() bool {
-	return f.Version.Counters == nil
-}
-
-// IsEquivalent checks that the two file infos represent the same actual file content,
-// i.e. it does purposely not check only selected (see below) struct members.
-// Permissions (config) and blocks (scanning) can be excluded from the comparison.
-// Any file info is not "equivalent", if it has different
-//  - type
-//  - deleted flag
-//  - invalid flag
-//  - permissions, unless they are ignored
-// A file is not "equivalent", if it has different
-//  - modification time
-//  - size
-//  - blocks, unless there are no blocks to compare (scanning)
-// A symlink is not "equivalent", if it has different
-//  - target
-// A directory does not have anything specific to check.
-func (f FileInfo) IsEquivalent(other FileInfo, ignorePerms bool, ignoreBlocks bool) bool {
-	if f.Name != other.Name || f.Type != other.Type || f.Deleted != other.Deleted || f.Invalid != other.Invalid {
-		return false
-	}
-
-	if !ignorePerms && !f.NoPermissions && !other.NoPermissions && !PermsEqual(f.Permissions, other.Permissions) {
-		return false
-	}
-
-	switch f.Type {
-	case FileInfoTypeFile:
-		return f.Size == other.Size && f.ModTime().Equal(other.ModTime()) && (ignoreBlocks || BlocksEqual(f.Blocks, other.Blocks))
-	case FileInfoTypeSymlink:
-		return f.SymlinkTarget == other.SymlinkTarget
-	case FileInfoTypeDirectory:
-		return true
-	}
-
-	return false
-}
-
-func PermsEqual(a, b uint32) bool {
-	switch runtime.GOOS {
-	case "windows":
-		// There is only writeable and read only, represented for user, group
-		// and other equally. We only compare against user.
-		return a&0600 == b&0600
-	default:
-		// All bits count
-		return a&0777 == b&0777
-	}
-}
-
-// BlocksEqual returns whether two slices of blocks are exactly the same hash
-// and index pair wise.
-func BlocksEqual(a, b []BlockInfo) bool {
-	if len(b) != len(a) {
-		return false
-	}
-
-	for i, sblk := range a {
-		if !bytes.Equal(sblk.Hash, b[i].Hash) {
-			return false
-		}
-	}
-
-	return true
-}
-
 func (f *FileInfo) Invalidate(invalidatedBy ShortID) {
 	f.Invalid = true
 	f.ModifiedBy = invalidatedBy
@@ -206,10 +130,7 @@ func (b BlockInfo) String() string {
 
 // IsEmpty returns true if the block is a full block of zeroes.
 func (b BlockInfo) IsEmpty() bool {
-	if v, ok := sha256OfEmptyBlock[int(b.Size)]; ok {
-		return bytes.Equal(b.Hash, v[:])
-	}
-	return false
+	return b.Size == BlockSize && bytes.Equal(b.Hash, sha256OfEmptyBlock[:])
 }
 
 type IndexID uint64

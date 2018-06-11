@@ -4,14 +4,11 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
-	"net/url"
 	"time"
 
+	"github.com/anacrolix/dht"
 	"golang.org/x/time/rate"
 
-	"github.com/anacrolix/dht"
-	"github.com/anacrolix/missinggo"
-	"github.com/anacrolix/missinggo/expect"
 	"github.com/anacrolix/torrent/iplist"
 	"github.com/anacrolix/torrent/storage"
 )
@@ -36,16 +33,16 @@ type Config struct {
 	// The address to listen for new uTP and TCP bittorrent protocol
 	// connections. DHT shares a UDP socket with uTP unless configured
 	// otherwise.
-	ListenHost              func(network string) string
-	ListenPort              int
+	ListenAddr              string `long:"listen-addr" value-name:"HOST:PORT"`
 	NoDefaultPortForwarding bool
 	// Don't announce to trackers. This only leaves DHT to discover peers.
 	DisableTrackers bool `long:"disable-trackers"`
 	DisablePEX      bool `long:"disable-pex"`
-
 	// Don't create a DHT.
-	NoDHT            bool `long:"disable-dht"`
-	DhtStartingNodes dht.StartingNodesGetter
+	NoDHT bool `long:"disable-dht"`
+	// Overrides the default DHT configuration.
+	DHTConfig dht.ServerConfig
+
 	// Never send chunks to peers.
 	NoUpload bool `long:"no-upload"`
 	// Disable uploading even when it isn't fair.
@@ -80,10 +77,6 @@ type Config struct {
 
 	EncryptionPolicy
 
-	// Sets usage of Socks5 Proxy. Authentication should be included in the url if needed.
-	// Example of setting: "socks5://demo:demo@192.168.99.100:1080"
-	ProxyURL string
-
 	IPBlocklist      iplist.Ranger
 	DisableIPv6      bool `long:"disable-ipv6"`
 	DisableIPv4      bool
@@ -115,25 +108,11 @@ type Config struct {
 	// impact of a few bad apples. 4s loses 1% of successful handshakes that
 	// are obtained with 60s timeout, and 5% of unsuccessful handshakes.
 	HandshakesTimeout time.Duration // default  20 * time.Second
-
-	PublicIp4 net.IP
-	PublicIp6 net.IP
-}
-
-func (cfg *Config) SetListenAddr(addr string) *Config {
-	host, port, err := missinggo.ParseHostPort(addr)
-	expect.Nil(err)
-	cfg.ListenHost = func(string) string { return host }
-	cfg.ListenPort = port
-	return cfg
 }
 
 func (cfg *Config) setDefaults() {
 	if cfg.HTTP == nil {
 		cfg.HTTP = DefaultHTTPClient
-		if cfg.ProxyURL != "" {
-			cfg.setProxyURL()
-		}
 	}
 	if cfg.HTTPUserAgent == "" {
 		cfg.HTTPUserAgent = DefaultHTTPUserAgent
@@ -165,25 +144,6 @@ func (cfg *Config) setDefaults() {
 	}
 	if cfg.HandshakesTimeout == 0 {
 		cfg.HandshakesTimeout = 20 * time.Second
-	}
-	if cfg.DhtStartingNodes == nil {
-		cfg.DhtStartingNodes = dht.GlobalBootstrapAddrs
-	}
-	if cfg.ListenHost == nil {
-		cfg.ListenHost = func(string) string { return "" }
-	}
-}
-
-func (cfg *Config) setProxyURL() {
-	fixedURL, err := url.Parse(cfg.ProxyURL)
-	if err != nil {
-		return
-	}
-
-	cfg.HTTP.Transport = &http.Transport{
-		Proxy:               http.ProxyURL(fixedURL),
-		TLSHandshakeTimeout: 15 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 	}
 }
 

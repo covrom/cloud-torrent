@@ -27,8 +27,6 @@ type transactionKey struct {
 	T          string // The KRPC transaction ID.
 }
 
-type StartingNodesGetter func() ([]Addr, error)
-
 // ServerConfig allows to set up a  configuration of the `Server` instance
 // to be created with NewServer
 type ServerConfig struct {
@@ -38,7 +36,7 @@ type ServerConfig struct {
 	Conn   net.PacketConn
 	// Don't respond to queries from other nodes.
 	Passive       bool
-	StartingNodes StartingNodesGetter
+	StartingNodes func() ([]Addr, error)
 	// Disable the DHT security extension:
 	// http://www.libtorrent.org/dht_sec.html.
 	NoSecurity bool
@@ -71,10 +69,9 @@ type ServerStats struct {
 	// Transactions awaiting a response.
 	OutstandingTransactions int
 	// Individual announce_peer requests that got a success response.
-	SuccessfulOutboundAnnouncePeerQueries int64
+	ConfirmedAnnounces int
 	// Nodes that have been blocked.
-	BadNodes                 uint
-	OutboundQueriesAttempted int64
+	BadNodes uint
 }
 
 func jitterDuration(average time.Duration, plusMinus time.Duration) time.Duration {

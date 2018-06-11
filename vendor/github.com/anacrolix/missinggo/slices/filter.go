@@ -2,7 +2,6 @@ package slices
 
 import "reflect"
 
-// sl []T, f is func(*T) bool.
 func FilterInPlace(sl interface{}, f interface{}) {
 	v := reflect.ValueOf(sl).Elem()
 	j := 0

@@ -18,7 +18,7 @@ type AnnounceRequest struct {
 	// Apparently this is optional. None can be used for announces done at
 	// regular intervals.
 	Event     AnnounceEvent
-	IPAddress uint32
+	IPAddress int32
 	Key       int32
 	NumWant   int32 // How many peer addresses are desired. -1 for default.
 	Port      uint16
@@ -56,10 +56,8 @@ type Announce struct {
 	UserAgent  string
 	HttpClient *http.Client
 	UdpNetwork string
-	// If the port is zero, it's assumed to be the same as the Request.Port
-	ClientIp4 krpc.NodeAddr
-	// If the port is zero, it's assumed to be the same as the Request.Port
-	ClientIp6 krpc.NodeAddr
+	ClientIp4  krpc.NodeAddr
+	ClientIp6  krpc.NodeAddr
 }
 
 // In an FP language with currying, what order what you put these params?

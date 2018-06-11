@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "SYNCTHING" "1" "May 05, 2018" "v0.14" "Syncthing"
+.TH "SYNCTHING" "1" "Jan 15, 2018" "v0.14" "Syncthing"
 .SH NAME
 syncthing \- Syncthing
 .
@@ -48,7 +48,7 @@ syncthing [\-audit] [\-auditfile=<file|\-|\-\->] [\-browser\-only] [device\-id]
 .UNINDENT
 .SH DESCRIPTION
 .sp
-Syncthing lets you synchronize your files bidirectionally across multiple
+Syncthing is an application that lets you synchronize your files across multiple
 devices. This means the creation, modification or deletion of files on one
 machine will automatically be replicated to your other devices. We believe your
 data is your data alone and you deserve to choose where it is stored. Therefore
@@ -99,8 +99,8 @@ Set destination filename for logging (use \fB"\-"\fP for stdout, which is the de
 .INDENT 0.0
 .TP
 .B \-logflags=<flags>
-Select information in log line prefix. The \fB\-logflags\fP value is a sum of
-the following:
+Select information in log line prefix, default 2. The \fB\-logflags\fP value is
+a sum of the following:
 .INDENT 7.0
 .IP \(bu 2
 1: Date
@@ -146,11 +146,9 @@ Start with all devices and folders paused.
 .INDENT 0.0
 .TP
 .B \-reset\-database
-Reset the database, forcing a full rescan and resync. Create \fI\&.stfolder\fP
-folders in each sync folder if they do not already exist. \fBCaution\fP:
-Ensure that all sync folders which are mountpoints are already mounted.
-Inconsistent versions may result if the mountpoint is later mounted and
-contains older versions.
+Reset the database, forcing a full rescan and resync.
+Create \fI\&.stfolder\fP folders in each sync folder if they do not already exist.
+\fBCaution\fP: Ensure that all sync folders which are mountpoints are already mounted. Inconsistent versions may result if the mountpoint is later mounted and contains older versions.
 .UNINDENT
 .INDENT 0.0
 .TP
@@ -187,6 +185,12 @@ Print verbose log output.
 .B \-version
 Show version.
 .UNINDENT
+.SH DEPRECATED OPTIONS
+.INDENT 0.0
+.TP
+.B \-gui\-apikey=<key>
+Override GUI API key (deprecated as of v0.13, to be removed in the future \- do not use).
+.UNINDENT
 .SH EXIT CODES
 .INDENT 0.0
 .TP
@@ -211,24 +215,6 @@ process (with environment variable \fBSTNORESTART\fP set). Exit codes over 125 a
 usually returned by the shell/binary loader/default signal handler. Exit codes
 over 128+N on Unix usually represent the signal which caused the process to
 exit. For example, \fB128 + 9 (SIGKILL) = 137\fP\&.
-.SH PROXIES
-.sp
-Syncthing can use a SOCKS, HTTP, or HTTPS proxy to talk to the outside
-world. The proxy is used for outgoing connections only \- it is not possible
-to accept incoming connections through the proxy. The proxy is configured
-through the environment variable \fBall_proxy\fP\&. Somewhat unusually, this
-variable must be named in lower case \- it is not “ALL_PROXY”. For
-example:
-.INDENT 0.0
-.INDENT 3.5
-.sp
-.nf
-.ft C
-$ export all_proxy=socks://192.0.2.42:8081
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
 .SH DEVELOPMENT SETTINGS
 .sp
 The following environment variables modify Syncthing’s behavior in ways that
@@ -237,29 +223,32 @@ If you start Syncthing from within service managers like systemd or supervisor,
 path expansion may not be supported.
 .INDENT 0.0
 .TP
+.B STNODEFAULTFOLDER
+Don’t create a default folder when starting for the first time. This
+variable will be ignored anytime after the first run.
+.TP
+.B STGUIASSETS
+Directory to load GUI assets from. Overrides compiled in assets.
+.TP
 .B STTRACE
-Used to increase the debugging verbosity in specific or all facilities,
-generally mapping to a Go package. Enabling any of these also enables
-microsecond timestamps, file names plus line numbers. Enter a
-comma\-separated string of facilities to trace. \fBsyncthing \-help\fP always
-outputs an up\-to\-date list. The valid facility strings are:
+Used to increase the debugging verbosity in specific or all facilities, generally mapping to a Go package. Enabling any of these also enables microsecond timestamps, file names plus line numbers. Enter a comma\-separated string of facilities to trace. \fBsyncthing \-help\fP always outputs an up\-to\-date list. The valid facility strings
+are:
 .INDENT 7.0
 .TP
 .B Main and operational facilities:
 .INDENT 7.0
+.TP
+.B main
+Main package.
+.TP
+.B model
+The root hub; the largest chunk of the system. File pulling, index transmission and requests for chunks.
 .TP
 .B config
 Configuration loading and saving.
 .TP
 .B db
 The database layer.
-.TP
-.B main
-Main package.
-.TP
-.B model
-The root hub; the largest chunk of the system. File pulling, index
-transmission and requests for chunks.
 .TP
 .B scanner
 File change detection and hashing.
@@ -272,8 +261,7 @@ File versioning.
 .INDENT 7.0
 .TP
 .B beacon
-Multicast and broadcast UDP discovery packets: Selected interfaces
-and addresses.
+Multicast and broadcast discovery packets.
 .TP
 .B connections
 Connection handling.
@@ -282,8 +270,13 @@ Connection handling.
 Dialing connections.
 .TP
 .B discover
-Remote device discovery requests, replies and registration of
-devices.
+Remote device discovery requests, replies and registration of devices.
+.TP
+.B relay
+Relay interaction.
+.TP
+.B protocol
+The BEP protocol.
 .TP
 .B nat
 NAT discovery and port mapping.
@@ -291,21 +284,12 @@ NAT discovery and port mapping.
 .B pmp
 NAT\-PMP discovery and port mapping.
 .TP
-.B protocol
-The BEP protocol.
-.TP
-.B relay
-Relay interaction (\fBstrelaysrv\fP).
-.TP
 .B upnp
 UPnP discovery and port mapping.
 .UNINDENT
 .TP
 .B Other facilities:
 .INDENT 7.0
-.TP
-.B fs
-Filesystem access.
 .TP
 .B events
 Event generation and logging.
@@ -325,19 +309,32 @@ Mutexes. Used for debugging race conditions and deadlocks.
 .B upgrade
 Binary upgrades.
 .TP
-.B walkfs
-Filesystem access while walking.
-.TP
 .B all
 All of the above.
 .UNINDENT
 .UNINDENT
 .TP
+.B STPROFILER
+Set to a listen address such as “127.0.0.1:9090” to start the profiler with
+HTTP access.
+.TP
+.B STCPUPROFILE
+Write a CPU profile to cpu\-$pid.pprof on exit.
+.TP
+.B STHEAPPROFILE
+Write heap profiles to \fBheap\-$pid\-$timestamp.pprof\fP each time heap usage
+increases.
+.TP
 .B STBLOCKPROFILE
 Write block profiles to \fBblock\-$pid\-$timestamp.pprof\fP every 20 seconds.
 .TP
-.B STCPUPROFILE
-Write a CPU profile to \fBcpu\-$pid.pprof\fP on exit.
+.B STPERFSTATS
+Write running performance statistics to \fBperf\-$pid.csv\fP\&. Not supported on
+Windows.
+.TP
+.B STDEADLOCK
+Used for debugging internal deadlocks. Use only under direction of a
+developer.
 .TP
 .B STDEADLOCKTIMEOUT
 Used for debugging internal deadlocks; sets debug sensitivity. Use only
@@ -347,46 +344,15 @@ under direction of a developer.
 Used for debugging internal deadlocks; sets debug sensitivity. Use only
 under direction of a developer.
 .TP
-.B STGUIASSETS
-Directory to load GUI assets from. Overrides compiled in assets. Useful for
-developing webgui, commonly use \fBSTGUIASSETS=gui bin/syncthing\fP\&.
-.TP
-.B STHASHING
-Specify which hashing package to use. Defaults to automatic based on
-performance. Specify “minio” (compatibility) or “standard” for the default
-Go implementation.
-.TP
-.B STHEAPPROFILE
-Write heap profiles to \fBheap\-$pid\-$timestamp.pprof\fP each time heap usage
-increases.
-.TP
-.B STNODEFAULTFOLDER
-Don’t create a default folder when starting for the first time. This
-variable will be ignored anytime after the first run.
-.TP
 .B STNORESTART
-Equivalent to the \fB\-no\-restart\fP flag. Disable the Syncthing monitor
-process which handles restarts for some configuration changes, upgrades,
-crashes and also log file writing (stdout is still written).
+Equivalent to the \-no\-restart argument. Disable the Syncthing monitor process which handles restarts for some configuration changes, upgrades, crashes and also log file writing (stdout is still written).
 .TP
 .B STNOUPGRADE
 Disable automatic upgrades.
 .TP
-.B STPROFILER
-Set to a listen address such as “127.0.0.1:9090” to start the profiler with
-HTTP access, which then can be reached at
-\fI\%http://localhost:9090/debug/pprof\fP\&. See \fBgo tool pprof\fP for more
-information.
-.TP
-.B STPERFSTATS
-Write running performance statistics to \fBperf\-$pid.csv\fP\&. Not supported on
-Windows.
-.TP
-.B STRECHECKDBEVERY
-Time before folder statistics (file, dir, … counts) are recalculated from
-scratch. The given duration must be parseable by GO’s time.ParseDuration. If
-missing or not parseable, the default value of 1 month is used. To force
-recalculation on every startup, set it to \fB0\fP\&.
+.B STHASHING
+Specify which hashing package to use. Defaults to automatic based on
+performance. Specify “minio” (compatibility) or “standard” for the default Go implementation.
 .TP
 .B GOMAXPROCS
 Set the maximum number of CPU cores to use. Defaults to all available CPU
@@ -406,6 +372,6 @@ numbers keep peak memory usage down, at the price of CPU usage
 .SH AUTHOR
 The Syncthing Authors
 .SH COPYRIGHT
-2014-2018, The Syncthing Authors
+2015, The Syncthing Authors
 .\" Generated by docutils manpage writer.
 .

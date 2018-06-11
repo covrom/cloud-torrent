@@ -20,6 +20,10 @@ const (
 	maxWeakhashFinderHits = 10
 )
 
+var (
+	Enabled = true
+)
+
 // Find finds all the blocks of the given size within io.Reader that matches
 // the hashes provided, and returns a hash -> slice of offsets within reader
 // map, that produces the same weak hash.

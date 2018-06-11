@@ -39,7 +39,6 @@ var simpleSplitTest = []struct {
 	{"text with\\\na backslash-escaped newline", []string{"text", "witha", "backslash-escaped", "newline"}},
 	{"text \"with\na\" quoted newline", []string{"text", "with\na", "quoted", "newline"}},
 	{"\"quoted\\d\\\\\\\" text with\\\na backslash-escaped newline\"", []string{"quoted\\d\\\" text witha backslash-escaped newline"}},
-	{"text with an escaped \\\n newline in the middle", []string{"text", "with", "an", "escaped", "newline", "in", "the", "middle"}},
 	{"foo\"bar\"baz", []string{"foobarbaz"}},
 }
 
@@ -51,5 +50,4 @@ var errorSplitTest = []struct {
 	{"'test'\\''ing", UnterminatedSingleQuoteError},
 	{"\"foo'bar", UnterminatedDoubleQuoteError},
 	{"foo\\", UnterminatedEscapeError},
-	{"   \\", UnterminatedEscapeError},
 }

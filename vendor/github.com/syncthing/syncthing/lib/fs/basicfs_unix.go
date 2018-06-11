@@ -30,8 +30,12 @@ func (f *BasicFilesystem) ReadSymlink(name string) (string, error) {
 	return os.Readlink(name)
 }
 
-func (f *BasicFilesystem) mkdirAll(path string, perm os.FileMode) error {
-	return os.MkdirAll(path, perm)
+func (f *BasicFilesystem) MkdirAll(name string, perm FileMode) error {
+	name, err := f.rooted(name)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(name, os.FileMode(perm))
 }
 
 // Unhide is a noop on unix, as unhiding files requires renaming them.

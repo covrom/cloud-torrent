@@ -8,7 +8,6 @@ package model
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -54,11 +53,10 @@ func expectTimeout(w *events.Subscription, t *testing.T) {
 func TestProgressEmitter(t *testing.T) {
 	w := events.Default.Subscribe(events.DownloadProgress)
 
-	c, path := createTmpWrapper(config.Configuration{})
+	c := config.Wrap("/tmp/test", config.Configuration{})
 	c.SetOptions(config.OptionsConfiguration{
 		ProgressUpdateIntervalS: 0,
 	})
-	defer os.Remove(path)
 
 	p := NewProgressEmitter(c)
 	go p.Serve()
@@ -103,12 +101,11 @@ func TestProgressEmitter(t *testing.T) {
 }
 
 func TestSendDownloadProgressMessages(t *testing.T) {
-	c, path := createTmpWrapper(config.Configuration{})
+	c := config.Wrap("/tmp/test", config.Configuration{})
 	c.SetOptions(config.OptionsConfiguration{
 		ProgressUpdateIntervalS: 0,
 		TempIndexMinBlocks:      10,
 	})
-	defer os.Remove(path)
 
 	fc := &fakeConnection{}
 

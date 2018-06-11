@@ -7,12 +7,14 @@
 package fs
 
 import (
+	"errors"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -362,17 +364,17 @@ func TestRooted(t *testing.T) {
 		{"baz/foo/", "bar/baz", "baz/foo/bar/baz", true},
 		{"baz/foo/", "/bar/baz", "baz/foo/bar/baz", true},
 
-		// Not escape attempts, but oddly formatted relative paths.
-		{"foo", "", "foo/", true},
-		{"foo", "/", "foo/", true},
-		{"foo", "/..", "foo/", true},
-		{"foo", "./bar", "foo/bar", true},
-		{"baz/foo", "./bar", "baz/foo/bar", true},
-		{"foo", "./bar/baz", "foo/bar/baz", true},
-		{"baz/foo", "./bar/baz", "baz/foo/bar/baz", true},
-		{"baz/foo", "bar/../baz", "baz/foo/baz", true},
-		{"baz/foo", "/bar/../baz", "baz/foo/baz", true},
-		{"baz/foo", "./bar/../baz", "baz/foo/baz", true},
+		// Not escape attempts, but oddly formatted relative paths. Disallowed.
+		{"foo", "./bar", "", false},
+		{"baz/foo", "./bar", "", false},
+		{"foo", "./bar/baz", "", false},
+		{"baz/foo", "./bar/baz", "", false},
+		{"baz/foo", "bar/../baz", "", false},
+		{"baz/foo", "/bar/../baz", "", false},
+		{"baz/foo", "./bar/../baz", "", false},
+		{"baz/foo", "bar/../baz", "", false},
+		{"baz/foo", "/bar/../baz", "", false},
+		{"baz/foo", "./bar/../baz", "", false},
 
 		// Results in an allowed path, but does it by probing. Disallowed.
 		{"foo", "../foo", "", false},
@@ -383,7 +385,10 @@ func TestRooted(t *testing.T) {
 		{"baz/foo", "bar/../../../baz/foo/bar", "", false},
 
 		// Escape attempts.
+		{"foo", "", "", false},
+		{"foo", "/", "", false},
 		{"foo", "..", "", false},
+		{"foo", "/..", "", false},
 		{"foo", "../", "", false},
 		{"foo", "../bar", "", false},
 		{"foo", "../foobar", "", false},
@@ -408,8 +413,8 @@ func TestRooted(t *testing.T) {
 		{"/", "/foo", "/foo", true},
 		{"/", "../foo", "", false},
 		{"/", "..", "", false},
-		{"/", "/", "/", true},
-		{"/", "", "/", true},
+		{"/", "/", "", false},
+		{"/", "", "", false},
 
 		// special case for filesystems to be able to MkdirAll('.') for example
 		{"/", ".", "/", true},
@@ -422,11 +427,11 @@ func TestRooted(t *testing.T) {
 			{`c:\`, `\foo`, `c:\foo`, true},
 			{`\\?\c:\`, `\foo`, `\\?\c:\foo`, true},
 			{`c:\`, `\\foo`, ``, false},
-			{`c:\`, ``, `c:\`, true},
-			{`c:\`, `\`, `c:\`, true},
+			{`c:\`, ``, ``, false},
+			{`c:\`, `\`, ``, false},
 			{`\\?\c:\`, `\\foo`, ``, false},
-			{`\\?\c:\`, ``, `\\?\c:\`, true},
-			{`\\?\c:\`, `\`, `\\?\c:\`, true},
+			{`\\?\c:\`, ``, ``, false},
+			{`\\?\c:\`, `\`, ``, false},
 
 			// makes no sense, but will be treated simply as a bad filename
 			{`c:\foo`, `d:\bar`, `c:\foo\d:\bar`, true},
@@ -479,5 +484,25 @@ func TestRooted(t *testing.T) {
 			t.Errorf("Unexpected pass for rooted(%q, %q) => %q", tc.root, tc.rel, res)
 			continue
 		}
+	}
+}
+
+func TestWatchErrorLinuxInterpretation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("testing of linux specific error codes")
+	}
+
+	var errTooManyFiles syscall.Errno = 24
+	var errNoSpace syscall.Errno = 28
+
+	if !reachedMaxUserWatches(errTooManyFiles) {
+		t.Errorf("Errno %v should be recognised to be about inotify limits.", errTooManyFiles)
+	}
+	if !reachedMaxUserWatches(errNoSpace) {
+		t.Errorf("Errno %v should be recognised to be about inotify limits.", errNoSpace)
+	}
+	err := errors.New("Another error")
+	if reachedMaxUserWatches(err) {
+		t.Errorf("This error does not concern inotify limits: %#v", err)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/anacrolix/missinggo/expect"
+	"github.com/anacrolix/missinggo/assert"
 )
 
 type T int64
@@ -12,13 +12,13 @@ type T int64
 func New(db *sql.DB) (ret *T) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
-	expect.Nil(err)
+	assert.Nil(err)
 	defer func() {
-		expect.Nil(conn.Close())
+		assert.Nil(conn.Close())
 	}()
 	res, err := conn.ExecContext(ctx, "insert into runs default values")
-	expect.Nil(err)
-	expect.OneRowAffected(res)
-	expect.Nil(conn.QueryRowContext(ctx, "select last_insert_rowid()").Scan(&ret))
+	assert.Nil(err)
+	assert.OneRowAffected(res)
+	assert.Nil(conn.QueryRowContext(ctx, "select last_insert_rowid()").Scan(&ret))
 	return
 }

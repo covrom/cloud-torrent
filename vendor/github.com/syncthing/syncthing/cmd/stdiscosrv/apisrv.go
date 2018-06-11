@@ -8,7 +8,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"encoding/pem"
@@ -19,11 +18,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/protocol"
+	"golang.org/x/net/context"
 )
 
 // announcement is the format received from and sent to clients
@@ -195,7 +194,6 @@ func (s *apiSrv) handleGET(ctx context.Context, w http.ResponseWriter, req *http
 
 		if misses%notFoundMissesWriteInterval == 0 {
 			rec.Misses = misses
-			rec.Missed = time.Now().UnixNano()
 			rec.Addresses = nil
 			// rec.Seen retained from get
 			s.db.put(key, rec)
@@ -336,14 +334,13 @@ func fixupAddresses(remote net.IP, addresses []string) []string {
 
 		ip := net.ParseIP(host)
 		if host == "" || ip.IsUnspecified() {
-			// Do not use IPv6 remote address if requested scheme is ...4
-			// (i.e., tcp4, etc.)
-			if strings.HasSuffix(uri.Scheme, "4") && remote.To4() == nil {
+			// Do not use IPv6 remote address if requested scheme is tcp4
+			if uri.Scheme == "tcp4" && remote.To4() == nil {
 				continue
 			}
 
-			// Do not use IPv4 remote address if requested scheme is ...6
-			if strings.HasSuffix(uri.Scheme, "6") && remote.To4() != nil {
+			// Do not use IPv4 remote address if requested scheme is tcp6
+			if uri.Scheme == "tcp6" && remote.To4() != nil {
 				continue
 			}
 

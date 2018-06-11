@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/anacrolix/dht"
+	"github.com/anacrolix/dht/krpc"
 	"github.com/anacrolix/log"
 	"github.com/anacrolix/missinggo"
 	"github.com/anacrolix/missinggo/bitmap"
@@ -95,7 +96,7 @@ type Torrent struct {
 	// active connections if were told about the peer after connecting with
 	// them. That encourages us to reconnect to peers that are well known in
 	// the swarm.
-	peers          prioritizedPeers
+	peers          map[peersKey]Peer
 	wantPeersEvent missinggo.Event
 	// An announcer for each tracker URL.
 	trackerAnnouncers map[string]*trackerScraper
@@ -154,9 +155,9 @@ func (t *Torrent) Closed() <-chan struct{} {
 // pending, and half-open peers.
 func (t *Torrent) KnownSwarm() (ks []Peer) {
 	// Add pending peers to the list
-	t.peers.Each(func(peer Peer) {
+	for _, peer := range t.peers {
 		ks = append(ks, peer)
-	})
+	}
 
 	// Add half-open peers to the list
 	for _, peer := range t.halfOpen {
@@ -253,16 +254,13 @@ func (t *Torrent) addPeer(p Peer) {
 		torrent.Add("peers not added because of bad addr", 1)
 		return
 	}
-	if t.peers.Add(p) {
-		torrent.Add("peers replaced", 1)
-	}
 	t.openNewConns()
-	for t.peers.Len() > cl.config.TorrentPeersHighWater {
-		_, ok := t.peers.DeleteMin()
-		if ok {
-			torrent.Add("excess reserve peers discarded", 1)
-		}
+	if len(t.peers) >= cl.config.TorrentPeersHighWater {
+		return
 	}
+	t.peers[peersKey{string(p.IP), p.Port}] = p
+	t.openNewConns()
+
 }
 
 func (t *Torrent) invalidateMetadata() {
@@ -737,6 +735,27 @@ func (t *Torrent) pendAllChunkSpecs(pieceIndex int) {
 	t.pieces[pieceIndex].dirtyChunks.Clear()
 }
 
+type Peer struct {
+	Id     [20]byte
+	IP     net.IP
+	Port   int
+	Source peerSource
+	// Peer is known to support encryption.
+	SupportsEncryption bool
+	pexPeerFlags
+}
+
+func (me *Peer) FromPex(na krpc.NodeAddr, fs pexPeerFlags) {
+	me.IP = append([]byte(nil), na.IP...)
+	me.Port = na.Port
+	me.Source = peerSourcePEX
+	// If they prefer encryption, they must support it.
+	if fs.Get(pexPrefersEncryption) {
+		me.SupportsEncryption = true
+	}
+	me.pexPeerFlags = fs
+}
+
 func (t *Torrent) pieceLength(piece int) pp.Integer {
 	if t.info.PieceLength == 0 {
 		// There will be no variance amongst pieces. Only pain.
@@ -1058,14 +1077,21 @@ func (t *Torrent) maxHalfOpen() int {
 
 func (t *Torrent) openNewConns() {
 	defer t.updateWantPeersEvent()
-	for t.peers.Len() != 0 {
+	for len(t.peers) != 0 {
 		if !t.wantConns() {
 			return
 		}
 		if len(t.halfOpen) >= t.maxHalfOpen() {
 			return
 		}
-		p := t.peers.PopMax()
+		var (
+			k peersKey
+			p Peer
+		)
+		for k, p = range t.peers {
+			break
+		}
+		delete(t.peers, k)
 		t.initiateConn(p)
 	}
 }
@@ -1246,7 +1272,7 @@ func (t *Torrent) wantPeers() bool {
 	if t.closed.IsSet() {
 		return false
 	}
-	if t.peers.Len() > t.cl.config.TorrentPeersLowWater {
+	if len(t.peers) > t.cl.config.TorrentPeersLowWater {
 		return false
 	}
 	return t.needData() || t.seeding()
@@ -1327,22 +1353,14 @@ func (t *Torrent) startMissingTrackerScrapers() {
 // Returns an AnnounceRequest with fields filled out to defaults and current
 // values.
 func (t *Torrent) announceRequest() tracker.AnnounceRequest {
-	// Note that IPAddress is not set. It's set for UDP inside the tracker
-	// code, since it's dependent on the network in use.
 	return tracker.AnnounceRequest{
 		Event:    tracker.None,
 		NumWant:  -1,
 		Port:     uint16(t.cl.incomingPeerPort()),
 		PeerId:   t.cl.peerID,
 		InfoHash: t.infoHash,
-		Key:      t.cl.announceKey(),
-
-		// The following are vaguely described in BEP 3.
-
 		Left:     t.bytesLeftAnnounce(),
-		Uploaded: t.stats.BytesWrittenData,
-		// There's no mention of wasted or unwanted download in the BEP.
-		Downloaded: t.stats.BytesReadUsefulData,
+		Key:      t.cl.announceKey(),
 	}
 }
 
@@ -1377,7 +1395,7 @@ func (t *Torrent) consumeDHTAnnounce(pvs <-chan dht.PeersValues) {
 			}
 			cl.mu.Lock()
 			t.addPeers(addPeers)
-			numPeers := t.peers.Len()
+			numPeers := len(t.peers)
 			cl.mu.Unlock()
 			if numPeers >= cl.config.TorrentPeersHighWater {
 				return
@@ -1388,9 +1406,9 @@ func (t *Torrent) consumeDHTAnnounce(pvs <-chan dht.PeersValues) {
 	}
 }
 
-func (t *Torrent) announceDHT(impliedPort bool, s *dht.Server) (err error) {
+func (t *Torrent) announceDHT(impliedPort bool) (err error) {
 	cl := t.cl
-	ps, err := s.Announce(t.infoHash, cl.incomingPeerPort(), impliedPort)
+	ps, err := cl.dHT.Announce(t.infoHash, cl.incomingPeerPort(), impliedPort)
 	if err != nil {
 		return
 	}
@@ -1399,7 +1417,7 @@ func (t *Torrent) announceDHT(impliedPort bool, s *dht.Server) (err error) {
 	return
 }
 
-func (t *Torrent) dhtAnnouncer(s *dht.Server) {
+func (t *Torrent) dhtAnnouncer() {
 	cl := t.cl
 	for {
 		select {
@@ -1407,7 +1425,7 @@ func (t *Torrent) dhtAnnouncer(s *dht.Server) {
 		case <-t.closed.LockedChan(&cl.mu):
 			return
 		}
-		err := t.announceDHT(true, s)
+		err := t.announceDHT(true)
 		func() {
 			cl.mu.Lock()
 			defer cl.mu.Unlock()
@@ -1440,7 +1458,7 @@ func (t *Torrent) Stats() TorrentStats {
 func (t *Torrent) statsLocked() TorrentStats {
 	t.stats.ActivePeers = len(t.conns)
 	t.stats.HalfOpenPeers = len(t.halfOpen)
-	t.stats.PendingPeers = t.peers.Len()
+	t.stats.PendingPeers = len(t.peers)
 	t.stats.TotalPeers = t.numTotalPeers()
 	t.stats.ConnectedSeeders = 0
 	for c := range t.conns {
@@ -1465,9 +1483,9 @@ func (t *Torrent) numTotalPeers() int {
 	for addr := range t.halfOpen {
 		peers[addr] = struct{}{}
 	}
-	t.peers.Each(func(peer Peer) {
+	for _, peer := range t.peers {
 		peers[fmt.Sprintf("%s:%d", peer.IP, peer.Port)] = struct{}{}
-	})
+	}
 	return len(peers)
 }
 
@@ -1733,16 +1751,4 @@ func (t *Torrent) initiateConn(peer Peer) {
 	}
 	t.halfOpen[addr] = peer
 	go t.cl.outgoingConnection(t, addr, peer.Source)
-}
-
-func (t *Torrent) AddClientPeer(cl *Client) {
-	t.AddPeers(func() (ps []Peer) {
-		for _, la := range cl.ListenAddrs() {
-			ps = append(ps, Peer{
-				IP:   missinggo.AddrIP(la),
-				Port: missinggo.AddrPort(la),
-			})
-		}
-		return
-	}())
 }

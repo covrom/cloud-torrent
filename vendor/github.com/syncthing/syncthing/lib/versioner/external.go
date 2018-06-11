@@ -10,7 +10,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/syncthing/syncthing/lib/fs"
@@ -30,10 +29,6 @@ type External struct {
 
 func NewExternal(folderID string, filesystem fs.Filesystem, params map[string]string) Versioner {
 	command := params["command"]
-
-	if runtime.GOOS == "windows" {
-		command = strings.Replace(command, `\`, `\\`, -1)
-	}
 
 	s := External{
 		command:    command,

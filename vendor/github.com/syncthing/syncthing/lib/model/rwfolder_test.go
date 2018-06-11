@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/db"
 	"github.com/syncthing/syncthing/lib/fs"
 	"github.com/syncthing/syncthing/lib/ignore"
@@ -25,6 +24,25 @@ import (
 	"github.com/syncthing/syncthing/lib/scanner"
 	"github.com/syncthing/syncthing/lib/sync"
 )
+
+func TestMain(m *testing.M) {
+	// We do this to make sure that the temp file required for the tests
+	// does not get removed during the tests. Also set the prefix so it's
+	// found correctly regardless of platform.
+	if fs.TempPrefix != fs.WindowsTempPrefix {
+		originalPrefix := fs.TempPrefix
+		fs.TempPrefix = fs.WindowsTempPrefix
+		defer func() {
+			fs.TempPrefix = originalPrefix
+		}()
+	}
+	future := time.Now().Add(time.Hour)
+	err := os.Chtimes(filepath.Join("testdata", fs.TempName("file")), future, future)
+	if err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 var blocks = []protocol.BlockInfo{
 	{Hash: []uint8{0xfa, 0x43, 0x23, 0x9b, 0xce, 0xe7, 0xb9, 0x7c, 0xa6, 0x2f, 0x0, 0x7c, 0xc6, 0x84, 0x87, 0x56, 0xa, 0x39, 0xe1, 0x9f, 0x74, 0xf3, 0xdd, 0xe7, 0x48, 0x6d, 0xb3, 0xf9, 0x8d, 0xf8, 0xe4, 0x71}}, // Zero'ed out block
@@ -75,7 +93,7 @@ func setUpFile(filename string, blockNumbers []int) protocol.FileInfo {
 
 func setUpModel(file protocol.FileInfo) *Model {
 	db := db.OpenMemory()
-	model := NewModel(defaultCfgWrapper, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
+	model := NewModel(defaultConfig, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
 	model.AddFolder(defaultFolderConfig)
 	// Update index
 	model.updateLocalsFromScanning("default", []protocol.FileInfo{file})
@@ -89,9 +107,6 @@ func setUpSendReceiveFolder(model *Model) *sendReceiveFolder {
 			model:               model,
 			initialScanFinished: make(chan struct{}),
 			ctx:                 context.TODO(),
-			FolderConfiguration: config.FolderConfiguration{
-				PullerMaxPendingKiB: defaultPullerPendingKiB,
-			},
 		},
 
 		fs:        fs.NewMtimeFS(fs.NewFilesystem(fs.FilesystemTypeBasic, "testdata"), db.NewNamespacedKV(model.db, "mtime")),
@@ -205,7 +220,6 @@ func TestCopierFinder(t *testing.T) {
 	if err != nil && !os.IsNotExist(err) {
 		t.Error(err)
 	}
-	defer os.Remove(tempFile)
 
 	existingBlocks := []int{0, 2, 3, 4, 0, 0, 7, 0}
 	existingFile := setUpFile(fs.TempName("file"), existingBlocks)
@@ -256,7 +270,7 @@ func TestCopierFinder(t *testing.T) {
 	}
 
 	// Verify that the fetched blocks have actually been written to the temp file
-	blks, err := scanner.HashFile(context.TODO(), fs.NewFilesystem(fs.FilesystemTypeBasic, "."), tempFile, protocol.MinBlockSize, nil, false)
+	blks, err := scanner.HashFile(context.TODO(), fs.NewFilesystem(fs.FilesystemTypeBasic, "."), tempFile, protocol.BlockSize, nil, false)
 	if err != nil {
 		t.Log(err)
 	}
@@ -267,14 +281,16 @@ func TestCopierFinder(t *testing.T) {
 		}
 	}
 	finish.fd.Close()
+
+	os.Remove(tempFile)
 }
 
 func TestWeakHash(t *testing.T) {
 	tempFile := filepath.Join("testdata", fs.TempName("weakhash"))
 	var shift int64 = 10
 	var size int64 = 1 << 20
-	expectBlocks := int(size / protocol.MinBlockSize)
-	expectPulls := int(shift / protocol.MinBlockSize)
+	expectBlocks := int(size / protocol.BlockSize)
+	expectPulls := int(shift / protocol.BlockSize)
 	if shift > 0 {
 		expectPulls++
 	}
@@ -307,7 +323,7 @@ func TestWeakHash(t *testing.T) {
 	// File 1: abcdefgh
 	// File 2: xyabcdef
 	f.Seek(0, os.SEEK_SET)
-	existing, err := scanner.Blocks(context.TODO(), f, protocol.MinBlockSize, size, nil, true)
+	existing, err := scanner.Blocks(context.TODO(), f, protocol.BlockSize, size, nil, true)
 	if err != nil {
 		t.Error(err)
 	}
@@ -316,7 +332,7 @@ func TestWeakHash(t *testing.T) {
 	remainder := io.LimitReader(f, size-shift)
 	prefix := io.LimitReader(rand.Reader, shift)
 	nf := io.MultiReader(prefix, remainder)
-	desired, err := scanner.Blocks(context.TODO(), nf, protocol.MinBlockSize, size, nil, true)
+	desired, err := scanner.Blocks(context.TODO(), nf, protocol.BlockSize, size, nil, true)
 	if err != nil {
 		t.Error(err)
 	}
@@ -434,13 +450,59 @@ func TestCopierCleanup(t *testing.T) {
 	}
 }
 
+// Make sure that the copier routine hashes the content when asked, and pulls
+// if it fails to find the block.
+func TestLastResortPulling(t *testing.T) {
+	// Add a file to index (with the incorrect block representation, as content
+	// doesn't actually match the block list)
+	file := setUpFile("empty", []int{0})
+	m := setUpModel(file)
+
+	// Pretend that we are handling a new file of the same content but
+	// with a different name (causing to copy that particular block)
+	file.Name = "newfile"
+
+	iterFn := func(folder, file string, index int32) bool {
+		return true
+	}
+
+	f := setUpSendReceiveFolder(m)
+
+	copyChan := make(chan copyBlocksState)
+	pullChan := make(chan pullBlockState, 1)
+	finisherChan := make(chan *sharedPullerState, 1)
+	dbUpdateChan := make(chan dbUpdateJob, 1)
+
+	// Run a single copier routine
+	go f.copierRoutine(copyChan, pullChan, finisherChan)
+
+	f.handleFile(file, copyChan, finisherChan, dbUpdateChan)
+
+	// Copier should hash empty file, realise that the region it has read
+	// doesn't match the hash which was advertised by the block map, fix it
+	// and ask to pull the block.
+	<-pullChan
+
+	// Verify that it did fix the incorrect hash.
+	if m.finder.Iterate(folders, blocks[0].Hash, iterFn) {
+		t.Error("Found unexpected block")
+	}
+
+	if !m.finder.Iterate(folders, scanner.SHA256OfNothing, iterFn) {
+		t.Error("Expected block not found")
+	}
+
+	(<-finisherChan).fd.Close()
+	os.Remove(filepath.Join("testdata", fs.TempName("newfile")))
+}
+
 func TestDeregisterOnFailInCopy(t *testing.T) {
 	file := setUpFile("filex", []int{0, 2, 0, 0, 5, 0, 0, 8})
 	defer os.Remove("testdata/" + fs.TempName("filex"))
 
 	db := db.OpenMemory()
 
-	m := NewModel(defaultCfgWrapper, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
+	m := NewModel(defaultConfig, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
 	m.AddFolder(defaultFolderConfig)
 
 	f := setUpSendReceiveFolder(m)
@@ -514,7 +576,7 @@ func TestDeregisterOnFailInPull(t *testing.T) {
 	defer os.Remove("testdata/" + fs.TempName("filex"))
 
 	db := db.OpenMemory()
-	m := NewModel(defaultCfgWrapper, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
+	m := NewModel(defaultConfig, protocol.LocalDeviceID, "syncthing", "dev", db, nil)
 	m.AddFolder(defaultFolderConfig)
 
 	f := setUpSendReceiveFolder(m)

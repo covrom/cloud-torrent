@@ -38,8 +38,6 @@ type container interface {
 	inot(firstOfRange, endx int) container // i stands for inplace, range is [firstOfRange,endx)
 	xor(r container) container
 	getShortIterator() shortIterable
-	getReverseIterator() shortIterable
-	getManyIterator() manyIterable
 	contains(i uint16) bool
 	maximum() uint16
 	minimum() uint16
@@ -243,9 +241,7 @@ func (ra *roaringArray) resize(newsize int) {
 }
 
 func (ra *roaringArray) clear() {
-	ra.resize(0)
-	ra.copyOnWrite = false
-	ra.conserz = nil
+	*ra = roaringArray{}
 }
 
 func (ra *roaringArray) clone() *roaringArray {
@@ -296,23 +292,6 @@ func (ra *roaringArray) getContainer(x uint16) container {
 
 func (ra *roaringArray) getContainerAtIndex(i int) container {
 	return ra.containers[i]
-}
-
-func (ra *roaringArray) getFastContainerAtIndex(i int, needsWriteable bool) container {
-	c := ra.getContainerAtIndex(i)
-	switch t := c.(type) {
-	case *arrayContainer:
-		c = t.toBitmapContainer()
-	case *runContainer16:
-		if !t.isFull() {
-			c = t.toBitmapContainer()
-		}
-	case *bitmapContainer:
-		if needsWriteable && ra.needCopyOnWrite[i] {
-			c = ra.containers[i].clone()
-		}
-	}
-	return c
 }
 
 func (ra *roaringArray) getWritableContainerAtIndex(i int) container {
@@ -571,10 +550,6 @@ func (ra *roaringArray) fromBuffer(buf []byte) (int64, error) {
 
 		// create is-run-container bitmap
 		isRunBitmapSize := (int(size) + 7) / 8
-		if pos+isRunBitmapSize > len(buf) {
-			return 0, fmt.Errorf("malformed bitmap, is-run bitmap overruns buffer at %d", pos+isRunBitmapSize)
-		}
-
 		isRunBitmap = buf[pos : pos+isRunBitmapSize]
 		pos += isRunBitmapSize
 	} else if cookie == serialCookieNoRunContainer {
@@ -583,14 +558,9 @@ func (ra *roaringArray) fromBuffer(buf []byte) (int64, error) {
 	} else {
 		return 0, fmt.Errorf("error in roaringArray.readFrom: did not find expected serialCookie in header")
 	}
-	if size > (1 << 16) {
-		return 0, fmt.Errorf("It is logically impossible to have more than (1<<16) containers.")
-	}
+
 	// descriptive header
 	// keycard - is {key, cardinality} tuple slice
-	if pos+2*2*int(size) > len(buf) {
-		return 0, fmt.Errorf("malfomred bitmap, key-cardinality slice overruns buffer at %d", pos+2*2*int(size))
-	}
 	keycard := byteSliceAsUint16Slice(buf[pos : pos+2*2*int(size)])
 	pos += 2 * 2 * int(size)
 
@@ -599,21 +569,9 @@ func (ra *roaringArray) fromBuffer(buf []byte) (int64, error) {
 	}
 
 	// Allocate slices upfront as number of containers is known
-	if cap(ra.containers) >= int(size) {
-		ra.containers = ra.containers[:size]
-	} else {
-		ra.containers = make([]container, size)
-	}
-	if cap(ra.keys) >= int(size) {
-		ra.keys = ra.keys[:size]
-	} else {
-		ra.keys = make([]uint16, size)
-	}
-	if cap(ra.needCopyOnWrite) >= int(size) {
-		ra.needCopyOnWrite = ra.needCopyOnWrite[:size]
-	} else {
-		ra.needCopyOnWrite = make([]bool, size)
-	}
+	ra.containers = make([]container, size)
+	ra.keys = make([]uint16, size)
+	ra.needCopyOnWrite = make([]bool, size)
 
 	for i := uint32(0); i < size; i++ {
 		key := uint16(keycard[2*i])
@@ -625,9 +583,6 @@ func (ra *roaringArray) fromBuffer(buf []byte) (int64, error) {
 			// run container
 			nr := binary.LittleEndian.Uint16(buf[pos:])
 			pos += 2
-			if pos+int(nr)*4 > len(buf) {
-				return 0, fmt.Errorf("malformed bitmap, a run container overruns buffer at %d:%d", pos, pos+int(nr)*4)
-			}
 			nb := runContainer16{
 				iv:   byteSliceAsInterval16Slice(buf[pos : pos+int(nr)*4]),
 				card: int64(card),
@@ -692,9 +647,6 @@ func (ra *roaringArray) readFrom(stream io.Reader) (int64, error) {
 		pos += 4
 	} else {
 		return 0, fmt.Errorf("error in roaringArray.readFrom: did not find expected serialCookie in header")
-	}
-	if size > (1 << 16) {
-		return 0, fmt.Errorf("It is logically impossible to have more than (1<<16) containers.")
 	}
 	// descriptive header
 	keycard := make([]uint16, 2*size, 2*size)

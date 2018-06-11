@@ -154,7 +154,7 @@ func TestDatabaseGetSet(t *testing.T) {
 	}
 	if len(rec.Addresses) != 1 {
 		t.Log(rec.Addresses)
-		t.Fatal("should have one address")
+		t.Fatal("should have one addres")
 	}
 	if rec.Misses != 0 {
 		t.Log(rec.Misses)

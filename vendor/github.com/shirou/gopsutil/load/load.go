@@ -6,7 +6,11 @@ import (
 	"github.com/shirou/gopsutil/internal/common"
 )
 
-var invoke common.Invoker = common.Invoke{}
+var invoke common.Invoker
+
+func init() {
+	invoke = common.Invoke{}
+}
 
 type AvgStat struct {
 	Load1  float64 `json:"load1"`

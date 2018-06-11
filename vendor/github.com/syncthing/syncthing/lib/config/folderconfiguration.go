@@ -18,9 +18,9 @@ import (
 )
 
 var (
-	ErrPathNotDirectory = errors.New("folder path not a directory")
-	ErrPathMissing      = errors.New("folder path missing")
-	ErrMarkerMissing    = errors.New("folder marker missing")
+	errPathNotDirectory = errors.New("folder path not a directory")
+	errPathMissing      = errors.New("folder path missing")
+	errMarkerMissing    = errors.New("folder marker missing")
 )
 
 const DefaultMarkerName = ".stfolder"
@@ -40,7 +40,7 @@ type FolderConfiguration struct {
 	MinDiskFree           Size                        `xml:"minDiskFree" json:"minDiskFree"`
 	Versioning            VersioningConfiguration     `xml:"versioning" json:"versioning"`
 	Copiers               int                         `xml:"copiers" json:"copiers"` // This defines how many files are handled concurrently.
-	PullerMaxPendingKiB   int                         `xml:"pullerMaxPendingKiB" json:"pullerMaxPendingKiB"`
+	Pullers               int                         `xml:"pullers" json:"pullers"` // Defines how many blocks are fetched at the same time, possibly between separate copier routines.
 	Hashers               int                         `xml:"hashers" json:"hashers"` // Less than one sets the value to the number of cores. These are CPU bound due to hashing.
 	Order                 PullOrder                   `xml:"order" json:"order"`
 	IgnoreDelete          bool                        `xml:"ignoreDelete" json:"ignoreDelete"`
@@ -52,13 +52,11 @@ type FolderConfiguration struct {
 	Paused                bool                        `xml:"paused" json:"paused"`
 	WeakHashThresholdPct  int                         `xml:"weakHashThresholdPct" json:"weakHashThresholdPct"` // Use weak hash if more than X percent of the file has changed. Set to -1 to always use weak hash.
 	MarkerName            string                      `xml:"markerName" json:"markerName"`
-	UseLargeBlocks        bool                        `xml:"useLargeBlocks" json:"useLargeBlocks"`
 
 	cachedFilesystem fs.Filesystem
 
 	DeprecatedReadOnly       bool    `xml:"ro,attr,omitempty" json:"-"`
 	DeprecatedMinDiskFreePct float64 `xml:"minDiskFreePct,omitempty" json:"-"`
-	DeprecatedPullers        int     `xml:"pullers,omitempty" json:"-"`
 }
 
 type FolderDeviceConfiguration struct {
@@ -68,17 +66,16 @@ type FolderDeviceConfiguration struct {
 
 func NewFolderConfiguration(myID protocol.DeviceID, id, label string, fsType fs.FilesystemType, path string) FolderConfiguration {
 	f := FolderConfiguration{
-		ID:               id,
-		Label:            label,
-		RescanIntervalS:  3600,
-		FSWatcherEnabled: true,
-		FSWatcherDelayS:  10,
-		MinDiskFree:      Size{Value: 1, Unit: "%"},
-		Devices:          []FolderDeviceConfiguration{{DeviceID: myID}},
-		AutoNormalize:    true,
-		MaxConflicts:     -1,
-		FilesystemType:   fsType,
-		Path:             path,
+		ID:              id,
+		Label:           label,
+		RescanIntervalS: 60,
+		FSWatcherDelayS: 10,
+		MinDiskFree:     Size{Value: 1, Unit: "%"},
+		Devices:         []FolderDeviceConfiguration{{DeviceID: myID}},
+		AutoNormalize:   true,
+		MaxConflicts:    -1,
+		FilesystemType:  fsType,
+		Path:            path,
 	}
 	f.prepare()
 	return f
@@ -115,7 +112,7 @@ func (f FolderConfiguration) Versioner() versioner.Versioner {
 }
 
 func (f *FolderConfiguration) CreateMarker() error {
-	if err := f.CheckPath(); err != ErrMarkerMissing {
+	if err := f.CheckPath(); err != errMarkerMissing {
 		return err
 	}
 	if f.MarkerName != DefaultMarkerName {
@@ -153,7 +150,7 @@ func (f *FolderConfiguration) CheckPath() error {
 		if !fs.IsNotExist(err) {
 			return err
 		}
-		return ErrPathMissing
+		return errPathMissing
 	}
 
 	// Users might have the root directory as a symlink or reparse point.
@@ -163,7 +160,7 @@ func (f *FolderConfiguration) CheckPath() error {
 	// Stat ends up calling stat on C:\dir\file\ which, fails with "is not a directory"
 	// in the error check above, and we don't even get to here.
 	if !fi.IsDir() && !fi.IsSymlink() {
-		return ErrPathNotDirectory
+		return errPathNotDirectory
 	}
 
 	_, err = f.Filesystem().Stat(f.MarkerName)
@@ -171,7 +168,7 @@ func (f *FolderConfiguration) CheckPath() error {
 		if !fs.IsNotExist(err) {
 			return err
 		}
-		return ErrMarkerMissing
+		return errMarkerMissing
 	}
 
 	return nil
@@ -277,18 +274,4 @@ func (l FolderDeviceConfigurationList) Len() int {
 
 func (f *FolderConfiguration) CheckFreeSpace() (err error) {
 	return checkFreeSpace(f.MinDiskFree, f.Filesystem())
-}
-
-type FolderConfigurationList []FolderConfiguration
-
-func (l FolderConfigurationList) Len() int {
-	return len(l)
-}
-
-func (l FolderConfigurationList) Less(a, b int) bool {
-	return l[a].ID < l[b].ID
-}
-
-func (l FolderConfigurationList) Swap(a, b int) {
-	l[a], l[b] = l[b], l[a]
 }

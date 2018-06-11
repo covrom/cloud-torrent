@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/anacrolix/missinggo/expect"
+	"github.com/anacrolix/missinggo/assert"
 )
 
 func NewValue() *contextValue {
@@ -21,7 +21,7 @@ func (me contextValue) Get(ctx context.Context) interface{} {
 
 // Sets the value on the Request. It must not have been already set.
 func (me contextValue) SetRequestOnce(r *http.Request, val interface{}) *http.Request {
-	expect.Nil(me.Get(r.Context()))
+	assert.Nil(me.Get(r.Context()))
 	return r.WithContext(context.WithValue(r.Context(), me.key, val))
 }
 

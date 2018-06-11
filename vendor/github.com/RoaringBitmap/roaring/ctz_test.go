@@ -29,6 +29,7 @@ func TestCountTrailingZeros072(t *testing.T) {
 
 func getRandomUint64Set(n int) []uint64 {
 	seed := int64(42)
+	p("seed is %v", seed)
 	rand.Seed(seed)
 
 	var buf [8]byte

@@ -46,6 +46,7 @@ import (
 	"github.com/syncthing/syncthing/lib/sha256"
 	"github.com/syncthing/syncthing/lib/tlsutil"
 	"github.com/syncthing/syncthing/lib/upgrade"
+	"github.com/syncthing/syncthing/lib/weakhash"
 
 	"github.com/thejerf/suture"
 
@@ -196,7 +197,7 @@ are mostly useful for developers. Use with care.
                    "minio" for the github.com/minio/sha256-simd implementation,
                    and blank (the default) for auto detection.
 
- STRECHECKDBEVERY  Set to a time interval to override the default database
+ STDBCHECKEVERY    Set to a time interval to override the default database
                    check interval of 30 days (720h). The interval understands
                    "h", "m" and "s" abbreviations for hours minutes and seconds.
                    Valid values are like "720h", "30s", etc.
@@ -302,7 +303,7 @@ func parseCommandLineOptions() RuntimeOptions {
 	flag.BoolVar(&options.verbose, "verbose", false, "Print verbose log output")
 	flag.BoolVar(&options.paused, "paused", false, "Start with all devices and folders paused")
 	flag.BoolVar(&options.unpaused, "unpaused", false, "Start with all devices and folders unpaused")
-	flag.StringVar(&options.logFile, "logfile", options.logFile, "Log file name (still always logs to stdout). Cannot be used together with -no-restart/STNORESTART environment variable.")
+	flag.StringVar(&options.logFile, "logfile", options.logFile, "Log file name (use \"-\" for stdout)")
 	flag.StringVar(&options.auditFile, "auditfile", options.auditFile, "Specify audit file (use \"-\" for stdout, \"--\" for stderr)")
 	if runtime.GOOS == "windows" {
 		// Allow user to hide the console window
@@ -382,7 +383,7 @@ func main() {
 	}
 
 	if options.showPaths {
-		showPaths(options)
+		showPaths()
 		return
 	}
 
@@ -696,19 +697,37 @@ func syncthingMain(runtimeOptions RuntimeOptions) {
 		},
 	}
 
-	perf := cpuBench(3, 150*time.Millisecond, true)
-	l.Infof("Hashing performance is %.02f MB/s", perf)
+	if opts := cfg.Options(); opts.WeakHashSelectionMethod == config.WeakHashAuto {
+		perfWithWeakHash := cpuBench(3, 150*time.Millisecond, true)
+		l.Infof("Hashing performance with weak hash is %.02f MB/s", perfWithWeakHash)
+		perfWithoutWeakHash := cpuBench(3, 150*time.Millisecond, false)
+		l.Infof("Hashing performance without weak hash is %.02f MB/s", perfWithoutWeakHash)
+
+		if perfWithoutWeakHash*0.8 > perfWithWeakHash {
+			l.Infof("Weak hash disabled, as it has an unacceptable performance impact.")
+			weakhash.Enabled = false
+		} else {
+			l.Infof("Weak hash enabled, as it has an acceptable performance impact.")
+			weakhash.Enabled = true
+		}
+	} else if opts.WeakHashSelectionMethod == config.WeakHashNever {
+		l.Infof("Disabling weak hash")
+		weakhash.Enabled = false
+	} else if opts.WeakHashSelectionMethod == config.WeakHashAlways {
+		l.Infof("Enabling weak hash")
+		weakhash.Enabled = true
+	}
 
 	dbFile := locations[locDatabase]
 	ldb, err := db.Open(dbFile)
+
 	if err != nil {
 		l.Fatalln("Cannot open database:", err, "- Is another copy of Syncthing already running?")
 	}
 
 	if runtimeOptions.resetDeltaIdxs {
 		l.Infoln("Reinitializing delta index IDs")
-		ldb.DropLocalDeltaIndexIDs()
-		ldb.DropRemoteDeltaIndexIDs()
+		ldb.DropDeltaIndexIDs()
 	}
 
 	protectedFiles := []string{
@@ -727,32 +746,27 @@ func syncthingMain(runtimeOptions RuntimeOptions) {
 		}
 	}
 
-	// Grab the previously running version string from the database.
-
-	miscDB := db.NewNamespacedKV(ldb, string(db.KeyTypeMiscData))
-	prevVersion, _ := miscDB.String("prevVersion")
-
-	// Strip away prerelease/beta stuff and just compare the release
-	// numbers. 0.14.44 to 0.14.45-banana is an upgrade, 0.14.45-banana to
-	// 0.14.45-pineapple is not.
-
-	prevParts := strings.Split(prevVersion, "-")
-	curParts := strings.Split(Version, "-")
-	if prevParts[0] != curParts[0] {
-		if prevVersion != "" {
-			l.Infoln("Detected upgrade from", prevVersion, "to", Version)
-		}
-
-		// Drop delta indexes in case we've changed random stuff we
-		// shouldn't have. We will resend our index on next connect.
-		ldb.DropLocalDeltaIndexIDs()
-
-		// Remember the new version.
-		miscDB.PutString("prevVersion", Version)
+	if cfg.RawCopy().OriginalVersion == 15 {
+		// The config version 15->16 migration is about handling ignores and
+		// delta indexes and requires that we drop existing indexes that
+		// have been incorrectly ignore filtered.
+		ldb.DropDeltaIndexIDs()
 	}
-
-	// Potential database transitions
-	ldb.UpdateSchema()
+	if cfg.RawCopy().OriginalVersion < 19 {
+		// Converts old symlink types to new in the entire database.
+		ldb.ConvertSymlinkTypes()
+	}
+	if cfg.RawCopy().OriginalVersion < 26 {
+		// Adds invalid (ignored) files to global list of files
+		changed := 0
+		for folderID, folderCfg := range folders {
+			changed += ldb.AddInvalidToGlobal([]byte(folderID), protocol.LocalDeviceID[:])
+			for _, deviceCfg := range folderCfg.Devices {
+				changed += ldb.AddInvalidToGlobal([]byte(folderID), deviceCfg.DeviceID[:])
+			}
+		}
+		l.Infof("Database update: Added %d ignored files to the global list", changed)
+	}
 
 	m := model.NewModel(cfg, myID, "syncthing", Version, ldb, protectedFiles)
 
@@ -1299,13 +1313,13 @@ func checkShortIDs(cfg *config.Wrapper) error {
 	return nil
 }
 
-func showPaths(options RuntimeOptions) {
+func showPaths() {
 	fmt.Printf("Configuration file:\n\t%s\n\n", locations[locConfigFile])
 	fmt.Printf("Database directory:\n\t%s\n\n", locations[locDatabase])
 	fmt.Printf("Device private key & certificate files:\n\t%s\n\t%s\n\n", locations[locKeyFile], locations[locCertFile])
 	fmt.Printf("HTTPS private key & certificate files:\n\t%s\n\t%s\n\n", locations[locHTTPSKeyFile], locations[locHTTPSCertFile])
-	fmt.Printf("Log file:\n\t%s\n\n", options.logFile)
-	fmt.Printf("GUI override directory:\n\t%s\n\n", options.assetDir)
+	fmt.Printf("Log file:\n\t%s\n\n", locations[locLogFile])
+	fmt.Printf("GUI override directory:\n\t%s\n\n", locations[locGUIAssets])
 	fmt.Printf("Default sync folder directory:\n\t%s\n\n", locations[locDefFolder])
 }
 

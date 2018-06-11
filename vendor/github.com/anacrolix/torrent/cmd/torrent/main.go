@@ -13,6 +13,7 @@ import (
 
 	"github.com/anacrolix/torrent/iplist"
 
+	"github.com/anacrolix/dht"
 	"github.com/anacrolix/envpprof"
 	"github.com/anacrolix/tagflag"
 	"github.com/dustin/go-humanize"
@@ -130,7 +131,6 @@ var flags = struct {
 	DownloadRate    tagflag.Bytes  `help:"max bytes per second down from peers"`
 	Debug           bool
 	PackedBlocklist string
-	Stats           *bool
 	tagflag.StartPos
 	Torrent []string `arity:"+" help:"torrent file path or magnet uri"`
 }{
@@ -144,18 +144,13 @@ func stdoutAndStderrAreSameFile() bool {
 	return os.SameFile(fi1, fi2)
 }
 
-func statsEnabled() bool {
-	if flags.Stats == nil {
-		return flags.Debug
-	}
-	return *flags.Stats
-}
-
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	tagflag.Parse(&flags)
-	defer envpprof.Stop()
 	clientConfig := torrent.Config{
+		DHTConfig: dht.ServerConfig{
+			StartingNodes: dht.GlobalBootstrapAddrs,
+		},
 		Debug: flags.Debug,
 		Seed:  flags.Seed,
 	}
@@ -171,7 +166,7 @@ func main() {
 		clientConfig.DefaultStorage = storage.NewMMap("")
 	}
 	if flags.Addr != nil {
-		clientConfig.SetListenAddr(flags.Addr.String())
+		clientConfig.ListenAddr = flags.Addr.String()
 	}
 	if flags.UploadRate != -1 {
 		clientConfig.UploadRateLimiter = rate.NewLimiter(rate.Limit(flags.UploadRate), 256<<10)
@@ -202,18 +197,10 @@ func main() {
 		log.Fatal("y u no complete torrents?!")
 	}
 	if flags.Seed {
-		outputStats(client)
 		select {}
-	}
-	outputStats(client)
-}
-
-func outputStats(cl *torrent.Client) {
-	if !statsEnabled() {
-		return
 	}
 	expvar.Do(func(kv expvar.KeyValue) {
 		fmt.Printf("%s: %s\n", kv.Key, kv.Value)
 	})
-	cl.WriteStatus(os.Stdout)
+	envpprof.Stop()
 }

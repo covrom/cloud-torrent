@@ -147,18 +147,13 @@ func SelectLatestRelease(rels []Release, current string, upgradeToPreReleases bo
 			l.Debugln("skipping pre-release", rel.Tag)
 			continue
 		}
-
-		expectedReleases := releaseNames(rel.Tag)
-	nextAsset:
 		for _, asset := range rel.Assets {
 			assetName := path.Base(asset.Name)
 			// Check for the architecture
-			for _, expRel := range expectedReleases {
-				if strings.HasPrefix(assetName, expRel) {
-					l.Debugln("selected", rel.Tag)
-					selected = rel
-					break nextAsset
-				}
+			expectedRelease := releaseName(rel.Tag)
+			if strings.HasPrefix(assetName, expectedRelease) {
+				l.Debugln("selected", rel.Tag)
+				selected = rel
 			}
 		}
 	}
@@ -172,15 +167,14 @@ func SelectLatestRelease(rels []Release, current string, upgradeToPreReleases bo
 
 // Upgrade to the given release, saving the previous binary with a ".old" extension.
 func upgradeTo(binary string, rel Release) error {
-	expectedReleases := releaseNames(rel.Tag)
+	expectedRelease := releaseName(rel.Tag)
+	l.Debugf("expected release asset %q", expectedRelease)
 	for _, asset := range rel.Assets {
 		assetName := path.Base(asset.Name)
 		l.Debugln("considering release", assetName)
 
-		for _, expRel := range expectedReleases {
-			if strings.HasPrefix(assetName, expRel) {
-				return upgradeToURL(assetName, binary, asset.URL)
-			}
+		if strings.HasPrefix(assetName, expectedRelease) {
+			return upgradeToURL(assetName, binary, asset.URL)
 		}
 	}
 

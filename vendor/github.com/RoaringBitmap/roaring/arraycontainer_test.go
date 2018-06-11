@@ -159,6 +159,7 @@ func TestArrayContainerNumberOfRuns025(t *testing.T) {
 	Convey("arrayContainer's numberOfRuns() function should be correct against the runContainer equivalent",
 		t, func() {
 			seed := int64(42)
+			p("seed is %v", seed)
 			rand.Seed(seed)
 
 			trials := []trial{
@@ -172,6 +173,7 @@ func TestArrayContainerNumberOfRuns025(t *testing.T) {
 
 			tester := func(tr trial) {
 				for j := 0; j < tr.ntrial; j++ {
+					p("TestArrayContainerNumberOfRuns023 on check# j=%v", j)
 					ma := make(map[int]bool)
 
 					n := tr.n
@@ -189,6 +191,8 @@ func TestArrayContainerNumberOfRuns025(t *testing.T) {
 					// RunContainer computes this automatically
 					rc := newRunContainer16FromVals(false, a...)
 					rcNr := rc.numberOfRuns()
+
+					p("rcNr from run container is %v", rcNr)
 
 					// vs arrayContainer
 					ac := newArrayContainer()
@@ -243,6 +247,7 @@ func TestArrayContainerNumberOfRuns025(t *testing.T) {
 
 					//fmt.Printf("\nnum runs was: %v\n", rcNr)
 				}
+				p("done with randomized arrayContianer.numberOrRuns() checks for trial %#v", tr)
 			}
 
 			for i := range trials {
@@ -296,6 +301,8 @@ func TestArrayContainerEtc070(t *testing.T) {
 		ac.inot(0, MaxUint16+1)
 		rc = newRunContainer16Range(0, MaxUint16)
 
+		p("ac.card = %v", ac.getCardinality())
+		p("rc.card = %v", rc.getCardinality())
 		So(rc.equals(ac), ShouldBeTrue)
 
 		// comparing two array containers with different card

@@ -12,11 +12,7 @@ import (
 )
 
 func (a *C.utp_callback_arguments) bufBytes() []byte {
-	return *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{
-		uintptr(unsafe.Pointer(a.buf)),
-		int(a.len),
-		int(a.len),
-	}))
+	return *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{uintptr(unsafe.Pointer(a.buf)), int(a.len), int(a.len)}))
 }
 
 func (a *C.utp_callback_arguments) state() C.int {
@@ -35,24 +31,16 @@ func sendtoCallback(a *C.utp_callback_arguments) (ret C.uint64) {
 	sa := *(**C.struct_sockaddr)(unsafe.Pointer(&a.anon0[0]))
 	b := a.bufBytes()
 	addr := structSockaddrToUDPAddr(sa)
-	newSends := atomic.AddInt64(&sends, 1)
+	atomic.AddInt64(&sends, 1)
 	if logCallbacks {
-		Logger.Printf("sending %d bytes, %d packets", len(b), newSends)
+		Logger.Printf("sending %d bytes, %d packets", len(b), sends)
 	}
-	expMap.Add("socket PacketConn writes", 1)
 	n, err := s.pc.WriteTo(b, addr)
-	c := s.conns[a.socket]
 	if err != nil {
-		expMap.Add("socket PacketConn write errors", 1)
-		if c != nil && c.userOnError != nil {
-			go c.userOnError(err)
-		} else {
-			Logger.Printf("error sending packet: %s", err)
-		}
+		Logger.Printf("error sending packet: %s", err)
 		return
 	}
 	if n != len(b) {
-		expMap.Add("socket PacketConn short writes", 1)
 		Logger.Printf("expected to send %d bytes but only sent %d", len(b), n)
 	}
 	return
@@ -60,11 +48,11 @@ func sendtoCallback(a *C.utp_callback_arguments) (ret C.uint64) {
 
 //export errorCallback
 func errorCallback(a *C.utp_callback_arguments) C.uint64 {
-	err := errorForCode(a.error_code())
+	codeName := libErrorCodeNames(a.error_code())
 	if logCallbacks {
-		log.Printf("error callback: socket %p: %s", a.socket, err)
+		log.Printf("error callback: socket %p: %s", a.socket, codeName)
 	}
-	libContextToSocket[a.context].conns[a.socket].onError(err)
+	libContextToSocket[a.context].conns[a.socket].onLibError(codeName)
 	return 0
 }
 
@@ -126,7 +114,6 @@ func acceptCallback(a *C.utp_callback_arguments) C.uint64 {
 	s := getSocketForLibContext(a.context)
 	c := s.newConn(a.socket)
 	c.setRemoteAddr()
-	c.inited = true
 	s.pushBacklog(c)
 	return 0
 }

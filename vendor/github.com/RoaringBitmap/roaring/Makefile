@@ -1,4 +1,4 @@
-.PHONY: help all test format fmtcheck vet lint     qa deps clean nuke ser fetch-real-roaring-datasets
+.PHONY: help all test format fmtcheck vet lint     qa deps clean nuke rle backrle ser fetch-real-roaring-datasets
 
 
 
@@ -24,9 +24,7 @@ help:
 	@echo "    make clean       : Remove any build artifact"
 	@echo "    make nuke        : Deletes any intermediate file"
 	@echo ""
-	@echo "    make fuzz-smat   : Fuzzy testing with smat"
-	@echo "    make fuzz-stream : Fuzzy testing with stream deserialization"
-	@echo "    make fuzz-buffer : Fuzzy testing with buffer deserialization"
+	@echo "    make fuzz       : Fuzzy testing"
 	@echo ""
 
 # Alias for help target
@@ -73,19 +71,9 @@ deps:
 	GOPATH=$(GOPATH) go get github.com/philhofer/fwd
 	GOPATH=$(GOPATH) go get github.com/jtolds/gls
 
-fuzz-smat:
+fuzz:
 	go test -tags=gofuzz -run=TestGenerateSmatCorpus
-	go-fuzz-build -func FuzzSmat github.com/RoaringBitmap/roaring
-	go-fuzz -bin=./roaring-fuzz.zip -workdir=workdir/ -timeout=200
-
-
-fuzz-stream:
-	go-fuzz-build -func FuzzSerializationStream github.com/RoaringBitmap/roaring
-	go-fuzz -bin=./roaring-fuzz.zip -workdir=workdir/ -timeout=200
-
-
-fuzz-buffer:
-	go-fuzz-build -func FuzzSerializationBuffer github.com/RoaringBitmap/roaring
+	go-fuzz-build github.com/RoaringBitmap/roaring
 	go-fuzz -bin=./roaring-fuzz.zip -workdir=workdir/ -timeout=200
 
 # Remove any build artifact
@@ -97,8 +85,18 @@ nuke:
 	rm -rf ./target
 	GOPATH=$(GOPATH) go clean -i ./...
 
+rle:
+	cp rle.go rle16.go
+	perl -pi -e 's/32/16/g' rle16.go
+	cp rle_test.go rle16_test.go
+	perl -pi -e 's/32/16/g' rle16_test.go
 
-ser: 
+backrle:
+	cp rle16.go rle.go
+	perl -pi -e 's/16/32/g' rle.go
+	perl -pi -e 's/2032/2016/g' rle.go
+
+ser: rle
 	go generate
 
 cover:

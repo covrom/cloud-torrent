@@ -140,14 +140,9 @@ func (m *Matcher) Load(file string) error {
 	defer fd.Close()
 
 	m.changeDetector.Reset()
+	m.changeDetector.Remember(m.fs, file, info.ModTime())
 
-	err = m.parseLocked(fd, file)
-	// If we failed to parse, don't cache, as next time Load is called
-	// we'll pretend it's all good.
-	if err == nil {
-		m.changeDetector.Remember(m.fs, file, info.ModTime())
-	}
-	return err
+	return m.parseLocked(fd, file)
 }
 
 func (m *Matcher) Parse(r io.Reader, file string) error {
@@ -161,8 +156,6 @@ func (m *Matcher) parseLocked(r io.Reader, file string) error {
 	// Error is saved and returned at the end. We process the patterns
 	// (possibly blank) anyway.
 
-	m.lines = lines
-
 	newHash := hashPatterns(patterns)
 	if newHash == m.curHash {
 		// We've already loaded exactly these patterns.
@@ -170,6 +163,7 @@ func (m *Matcher) parseLocked(r io.Reader, file string) error {
 	}
 
 	m.curHash = newHash
+	m.lines = lines
 	m.patterns = patterns
 	if m.withCache {
 		m.matches = newCache(patterns)
@@ -244,10 +238,6 @@ func (m *Matcher) Patterns() []string {
 	return patterns
 }
 
-func (m *Matcher) String() string {
-	return fmt.Sprintf("Matcher/%v@%p", m.Patterns(), m)
-}
-
 func (m *Matcher) Hash() string {
 	m.mut.Lock()
 	defer m.mut.Unlock()
@@ -314,7 +304,7 @@ func loadIgnoreFile(fs fs.Filesystem, file string, cd ChangeDetector) (fs.File, 
 	return fd, info, err
 }
 
-func loadParseIncludeFile(filesystem fs.Filesystem, file string, cd ChangeDetector, linesSeen map[string]struct{}) ([]Pattern, error) {
+func loadParseIncludeFile(filesystem fs.Filesystem, file string, cd ChangeDetector, linesSeen map[string]struct{}) ([]string, []Pattern, error) {
 	// Allow escaping the folders filesystem.
 	// TODO: Deprecate, somehow?
 	if filesystem.Type() == fs.FilesystemTypeBasic {
@@ -327,19 +317,18 @@ func loadParseIncludeFile(filesystem fs.Filesystem, file string, cd ChangeDetect
 	}
 
 	if cd.Seen(filesystem, file) {
-		return nil, fmt.Errorf("multiple include of ignore file %q", file)
+		return nil, nil, fmt.Errorf("multiple include of ignore file %q", file)
 	}
 
 	fd, info, err := loadIgnoreFile(filesystem, file, cd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer fd.Close()
 
 	cd.Remember(filesystem, file, info.ModTime())
 
-	_, patterns, err := parseIgnoreFile(filesystem, fd, file, cd, linesSeen)
-	return patterns, err
+	return parseIgnoreFile(filesystem, fd, file, cd, linesSeen)
 }
 
 func parseIgnoreFile(fs fs.Filesystem, fd io.Reader, currentFile string, cd ChangeDetector, linesSeen map[string]struct{}) ([]string, []Pattern, error) {
@@ -406,6 +395,14 @@ func parseIgnoreFile(fs fs.Filesystem, fd io.Reader, currentFile string, cd Chan
 				return fmt.Errorf("invalid pattern %q in ignore file (%v)", line, err)
 			}
 			patterns = append(patterns, pattern)
+		} else if strings.HasPrefix(line, "#include ") {
+			includeRel := strings.TrimSpace(line[len("#include "):])
+			includeFile := filepath.Join(filepath.Dir(currentFile), includeRel)
+			_, includePatterns, err := loadParseIncludeFile(fs, includeFile, cd, linesSeen)
+			if err != nil {
+				return fmt.Errorf("include of %q: %v", includeRel, err)
+			}
+			patterns = append(patterns, includePatterns...)
 		} else {
 			// Path name or pattern, add it so it matches files both in
 			// current directory and subdirs.
@@ -444,19 +441,8 @@ func parseIgnoreFile(fs fs.Filesystem, fd io.Reader, currentFile string, cd Chan
 
 		line = filepath.ToSlash(line)
 		switch {
-		case strings.HasPrefix(line, "#include"):
-			includeRel := strings.TrimSpace(line[len("#include "):])
-			includeFile := filepath.Join(filepath.Dir(currentFile), includeRel)
-			var includePatterns []Pattern
-			if includePatterns, err = loadParseIncludeFile(fs, includeFile, cd, linesSeen); err == nil {
-				patterns = append(patterns, includePatterns...)
-			} else {
-				// Wrap the error, as if the include does not exist, we get a
-				// IsNotExists(err) == true error, which we use to check
-				// existance of the .stignore file, and just end up assuming
-				// there is none, rather than a broken include.
-				err = fmt.Errorf("failed to load include file %s: %s", includeFile, err.Error())
-			}
+		case strings.HasPrefix(line, "#"):
+			err = addPattern(line)
 		case strings.HasSuffix(line, "/**"):
 			err = addPattern(line)
 		case strings.HasSuffix(line, "/"):

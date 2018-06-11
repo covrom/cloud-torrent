@@ -28,9 +28,7 @@ func main() {
 		cl.WriteStatus(w)
 	})
 	http.HandleFunc("/dht", func(w http.ResponseWriter, r *http.Request) {
-		for _, ds := range cl.DhtServers() {
-			ds.WriteStatus(w)
-		}
+		cl.DHT().WriteStatus(w)
 	})
 	wg := sync.WaitGroup{}
 	for _, arg := range args.Magnet {

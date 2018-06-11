@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	stdsync "sync"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -79,10 +78,9 @@ const (
 )
 
 const (
-	defaultCopiers          = 2
-	defaultPullerPause      = 60 * time.Second
-	defaultPullerPendingKiB = 2 * protocol.MaxBlockSize / 1024
-
+	defaultCopiers      = 2
+	defaultPullers      = 64
+	defaultPullerPause  = 60 * time.Second
 	maxPullerIterations = 3
 )
 
@@ -98,7 +96,8 @@ type sendReceiveFolder struct {
 	versioner versioner.Versioner
 	pause     time.Duration
 
-	queue *jobQueue
+	queue         *jobQueue
+	pullScheduled chan struct{}
 
 	errors    map[string]string // path -> error string
 	errorsMut sync.Mutex
@@ -111,28 +110,33 @@ func newSendReceiveFolder(model *Model, cfg config.FolderConfiguration, ver vers
 		fs:        fs,
 		versioner: ver,
 
-		queue: newJobQueue(),
+		queue:         newJobQueue(),
+		pullScheduled: make(chan struct{}, 1), // This needs to be 1-buffered so that we queue a pull if we're busy when it comes.
 
 		errorsMut: sync.NewMutex(),
 	}
 
+	f.configureCopiersAndPullers()
+
+	return f
+}
+
+func (f *sendReceiveFolder) configureCopiersAndPullers() {
 	if f.Copiers == 0 {
 		f.Copiers = defaultCopiers
 	}
-
-	// If the configured max amount of pending data is zero, we use the
-	// default. If it's configured to something non-zero but less than the
-	// protocol block size we adjust it upwards accordingly.
-	if f.PullerMaxPendingKiB == 0 {
-		f.PullerMaxPendingKiB = defaultPullerPendingKiB
-	}
-	if blockSizeKiB := protocol.MaxBlockSize / 1024; f.PullerMaxPendingKiB < blockSizeKiB {
-		f.PullerMaxPendingKiB = blockSizeKiB
+	if f.Pullers == 0 {
+		f.Pullers = defaultPullers
 	}
 
 	f.pause = f.basePause()
+}
 
-	return f
+// Helper function to check whether either the ignorePerm flag has been
+// set on the local host or the FlagNoPermBits has been set on the file/dir
+// which is being pulled.
+func (f *sendReceiveFolder) ignorePermissions(file protocol.FileInfo) bool {
+	return f.IgnorePerms || file.NoPermissions
 }
 
 // Serve will run scans and pulls. It will return when Stop()ed or on a
@@ -322,7 +326,7 @@ func (f *sendReceiveFolder) pullerIteration(ignores *ignore.Matcher, ignoresChan
 	doneWg := sync.NewWaitGroup()
 	updateWg := sync.NewWaitGroup()
 
-	l.Debugln(f, "copiers:", f.Copiers, "pullerPendingKiB:", f.PullerMaxPendingKiB)
+	l.Debugln(f, "c", f.Copiers, "p", f.Pullers)
 
 	updateWg.Add(1)
 	go func() {
@@ -340,12 +344,14 @@ func (f *sendReceiveFolder) pullerIteration(ignores *ignore.Matcher, ignoresChan
 		}()
 	}
 
-	pullWg.Add(1)
-	go func() {
-		// pullerRoutine finishes when pullChan is closed
-		f.pullerRoutine(pullChan, finisherChan)
-		pullWg.Done()
-	}()
+	for i := 0; i < f.Pullers; i++ {
+		pullWg.Add(1)
+		go func() {
+			// pullerRoutine finishes when pullChan is closed
+			f.pullerRoutine(pullChan, finisherChan)
+			pullWg.Done()
+		}()
+	}
 
 	doneWg.Add(1)
 	// finisherRoutine finishes when finisherChan is closed
@@ -365,7 +371,14 @@ func (f *sendReceiveFolder) pullerIteration(ignores *ignore.Matcher, ignoresChan
 	// Regular files to pull goes into the file queue, everything else
 	// (directories, symlinks and deletes) goes into the "process directly"
 	// pile.
-	folderFiles.WithNeed(protocol.LocalDeviceID, func(intf db.FileIntf) bool {
+
+	// Don't iterate over invalid/ignored files unless ignores have changed
+	iterate := folderFiles.WithNeed
+	if ignoresChanged {
+		iterate = folderFiles.WithNeedOrInvalid
+	}
+
+	iterate(protocol.LocalDeviceID, func(intf db.FileIntf) bool {
 		if f.IgnoreDelete && intf.IsDeleted() {
 			l.Debugln(f, "ignore file deletion (config)", intf.FileName())
 			return true
@@ -375,7 +388,7 @@ func (f *sendReceiveFolder) pullerIteration(ignores *ignore.Matcher, ignoresChan
 
 		switch {
 		case ignores.ShouldIgnore(file.Name):
-			file.Invalidate(f.shortID)
+			file.Invalidate(f.model.id.Short())
 			l.Debugln(f, "Handling ignored file", file)
 			dbUpdateChan <- dbUpdateJob{file, dbUpdateInvalidate}
 
@@ -403,7 +416,7 @@ func (f *sendReceiveFolder) pullerIteration(ignores *ignore.Matcher, ignoresChan
 			l.Debugln(f, "Needed file is unavailable", file)
 
 		case runtime.GOOS == "windows" && file.IsSymlink():
-			file.Invalidate(f.shortID)
+			file.Invalidate(f.model.id.Short())
 			l.Debugln(f, "Invalidating symlink (unsupported)", file.Name)
 			dbUpdateChan <- dbUpdateJob{file, dbUpdateInvalidate}
 
@@ -549,7 +562,7 @@ nextFile:
 		// we can just do a rename instead.
 		key := string(fi.Blocks[0].Hash)
 		for i, candidate := range buckets[key] {
-			if protocol.BlocksEqual(candidate.Blocks, fi.Blocks) {
+			if blocksEqual(candidate.Blocks, fi.Blocks) {
 				// Remove the candidate from the bucket
 				lidx := len(buckets[key]) - 1
 				buckets[key][i] = buckets[key][lidx]
@@ -604,6 +617,21 @@ nextFile:
 	return changed
 }
 
+// blocksEqual returns whether two slices of blocks are exactly the same hash
+// and index pair wise.
+func blocksEqual(src, tgt []protocol.BlockInfo) bool {
+	if len(tgt) != len(src) {
+		return false
+	}
+
+	for i, sblk := range src {
+		if !bytes.Equal(sblk.Hash, tgt[i].Hash) {
+			return false
+		}
+	}
+	return true
+}
+
 // handleDir creates or updates the given directory
 func (f *sendReceiveFolder) handleDir(file protocol.FileInfo, dbUpdateChan chan<- dbUpdateJob) {
 	// Used in the defer closure below, updated by the function body. Take
@@ -628,7 +656,7 @@ func (f *sendReceiveFolder) handleDir(file protocol.FileInfo, dbUpdateChan chan<
 	}()
 
 	mode := fs.FileMode(file.Permissions & 0777)
-	if f.IgnorePerms || file.NoPermissions {
+	if f.ignorePermissions(file) {
 		mode = 0777
 	}
 
@@ -657,7 +685,7 @@ func (f *sendReceiveFolder) handleDir(file protocol.FileInfo, dbUpdateChan chan<
 		// not MkdirAll because the parent should already exist.
 		mkdir := func(path string) error {
 			err = f.fs.Mkdir(path, mode)
-			if err != nil || f.IgnorePerms || file.NoPermissions {
+			if err != nil || f.ignorePermissions(file) {
 				return err
 			}
 
@@ -688,7 +716,7 @@ func (f *sendReceiveFolder) handleDir(file protocol.FileInfo, dbUpdateChan chan<
 	// The directory already exists, so we just correct the mode bits. (We
 	// don't handle modification times on directories, because that sucks...)
 	// It's OK to change mode bits on stuff within non-writable directories.
-	if f.IgnorePerms || file.NoPermissions {
+	if f.ignorePermissions(file) {
 		dbUpdateChan <- dbUpdateJob{file, dbUpdateHandleDir}
 	} else if err := f.fs.Chmod(file.Name, mode|(fs.FileMode(info.Mode())&retainBits)); err == nil {
 		dbUpdateChan <- dbUpdateJob{file, dbUpdateHandleDir}
@@ -1010,7 +1038,7 @@ func (f *sendReceiveFolder) handleFile(file protocol.FileInfo, copyChan chan<- c
 
 	// Check for an old temporary file which might have some blocks we could
 	// reuse.
-	tempBlocks, err := scanner.HashFile(f.ctx, f.fs, tempName, file.BlockSize(), nil, false)
+	tempBlocks, err := scanner.HashFile(f.ctx, f.fs, tempName, protocol.BlockSize, nil, false)
 	if err == nil {
 		// Check for any reusable blocks in the temp file
 		tempCopyBlocks, _ := blockDiff(tempBlocks, file.Blocks)
@@ -1079,7 +1107,7 @@ func (f *sendReceiveFolder) handleFile(file protocol.FileInfo, copyChan chan<- c
 		updated:          time.Now(),
 		available:        reused,
 		availableUpdated: time.Now(),
-		ignorePerms:      f.IgnorePerms || file.NoPermissions,
+		ignorePerms:      f.ignorePermissions(file),
 		hasCurFile:       hasCurFile,
 		curFile:          curFile,
 		mut:              sync.NewRWMutex(),
@@ -1139,7 +1167,7 @@ func populateOffsets(blocks []protocol.BlockInfo) {
 // shortcutFile sets file mode and modification time, when that's the only
 // thing that has changed.
 func (f *sendReceiveFolder) shortcutFile(file protocol.FileInfo) error {
-	if !f.IgnorePerms && !file.NoPermissions {
+	if !f.ignorePermissions(file) {
 		if err := f.fs.Chmod(file.Name, fs.FileMode(file.Permissions&0777)); err != nil {
 			f.newError("shortcut chmod", file.Name, err)
 			return err
@@ -1160,7 +1188,7 @@ func (f *sendReceiveFolder) shortcutFile(file protocol.FileInfo) error {
 // copierRoutine reads copierStates until the in channel closes and performs
 // the relevant copies when possible, or passes it to the puller routine.
 func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan chan<- pullBlockState, out chan<- *sharedPullerState) {
-	buf := make([]byte, protocol.MinBlockSize)
+	buf := make([]byte, protocol.BlockSize)
 
 	for state := range in {
 		dstFd, err := state.tempFile()
@@ -1186,32 +1214,36 @@ func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan ch
 		var file fs.File
 		var weakHashFinder *weakhash.Finder
 
-		blocksPercentChanged := 0
-		if tot := len(state.file.Blocks); tot > 0 {
-			blocksPercentChanged = (tot - state.have) * 100 / tot
-		}
-
-		if blocksPercentChanged >= f.WeakHashThresholdPct {
-			hashesToFind := make([]uint32, 0, len(state.blocks))
-			for _, block := range state.blocks {
-				if block.WeakHash != 0 {
-					hashesToFind = append(hashesToFind, block.WeakHash)
-				}
+		if weakhash.Enabled {
+			blocksPercentChanged := 0
+			if tot := len(state.file.Blocks); tot > 0 {
+				blocksPercentChanged = (tot - state.have) * 100 / tot
 			}
 
-			if len(hashesToFind) > 0 {
-				file, err = f.fs.Open(state.file.Name)
-				if err == nil {
-					weakHashFinder, err = weakhash.NewFinder(file, int(state.file.BlockSize()), hashesToFind)
-					if err != nil {
-						l.Debugln("weak hasher", err)
+			if blocksPercentChanged >= f.WeakHashThresholdPct {
+				hashesToFind := make([]uint32, 0, len(state.blocks))
+				for _, block := range state.blocks {
+					if block.WeakHash != 0 {
+						hashesToFind = append(hashesToFind, block.WeakHash)
 					}
 				}
+
+				if len(hashesToFind) > 0 {
+					file, err = f.fs.Open(state.file.Name)
+					if err == nil {
+						weakHashFinder, err = weakhash.NewFinder(file, protocol.BlockSize, hashesToFind)
+						if err != nil {
+							l.Debugln("weak hasher", err)
+						}
+					}
+				} else {
+					l.Debugf("not weak hashing %s. file did not contain any weak hashes", state.file.Name)
+				}
 			} else {
-				l.Debugf("not weak hashing %s. file did not contain any weak hashes", state.file.Name)
+				l.Debugf("not weak hashing %s. not enough changed %.02f < %d", state.file.Name, blocksPercentChanged, f.WeakHashThresholdPct)
 			}
 		} else {
-			l.Debugf("not weak hashing %s. not enough changed %.02f < %d", state.file.Name, blocksPercentChanged, f.WeakHashThresholdPct)
+			l.Debugf("not weak hashing %s. weak hashing disabled", state.file.Name)
 		}
 
 		for _, block := range state.blocks {
@@ -1228,14 +1260,10 @@ func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan ch
 				continue
 			}
 
-			if s := int(block.Size); s > cap(buf) {
-				buf = make([]byte, s)
-			} else {
-				buf = buf[:s]
-			}
+			buf = buf[:int(block.Size)]
 
 			found, err := weakHashFinder.Iterate(block.WeakHash, buf, func(offset int64) bool {
-				if verifyBuffer(buf, block) != nil {
+				if _, err := verifyBuffer(buf, block); err != nil {
 					return true
 				}
 
@@ -1264,14 +1292,23 @@ func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan ch
 						return false
 					}
 
-					_, err = fd.ReadAt(buf, int64(state.file.BlockSize())*int64(index))
+					_, err = fd.ReadAt(buf, protocol.BlockSize*int64(index))
 					fd.Close()
 					if err != nil {
 						return false
 					}
 
-					if err := verifyBuffer(buf, block); err != nil {
-						l.Debugln("Finder failed to verify buffer", err)
+					hash, err := verifyBuffer(buf, block)
+					if err != nil {
+						if hash != nil {
+							l.Debugf("Finder block mismatch in %s:%s:%d expected %q got %q", folder, path, index, block.Hash, hash)
+							err = f.model.finder.Fix(folder, path, index, block.Hash, hash)
+							if err != nil {
+								l.Warnln("finder fix:", err)
+							}
+						} else {
+							l.Debugln("Finder failed to verify buffer", err)
+						}
 						return false
 					}
 
@@ -1311,123 +1348,100 @@ func (f *sendReceiveFolder) copierRoutine(in <-chan copyBlocksState, pullChan ch
 	}
 }
 
-func verifyBuffer(buf []byte, block protocol.BlockInfo) error {
+func verifyBuffer(buf []byte, block protocol.BlockInfo) ([]byte, error) {
 	if len(buf) != int(block.Size) {
-		return fmt.Errorf("length mismatch %d != %d", len(buf), block.Size)
+		return nil, fmt.Errorf("length mismatch %d != %d", len(buf), block.Size)
 	}
 	hf := sha256.New()
 	_, err := hf.Write(buf)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	hash := hf.Sum(nil)
 
 	if !bytes.Equal(hash, block.Hash) {
-		return fmt.Errorf("hash mismatch %x != %x", hash, block.Hash)
+		return hash, fmt.Errorf("hash mismatch %x != %x", hash, block.Hash)
 	}
 
-	return nil
+	return hash, nil
 }
 
 func (f *sendReceiveFolder) pullerRoutine(in <-chan pullBlockState, out chan<- *sharedPullerState) {
-	requestLimiter := newByteSemaphore(f.PullerMaxPendingKiB * 1024)
-	wg := sync.NewWaitGroup()
-
 	for state := range in {
 		if state.failed() != nil {
 			out <- state.sharedPullerState
 			continue
 		}
 
-		// The requestLimiter limits how many pending block requests we have
-		// ongoing at any given time, based on the size of the blocks
-		// themselves.
+		// Get an fd to the temporary file. Technically we don't need it until
+		// after fetching the block, but if we run into an error here there is
+		// no point in issuing the request to the network.
+		fd, err := state.tempFile()
+		if err != nil {
+			out <- state.sharedPullerState
+			continue
+		}
 
-		state := state
-		bytes := int(state.block.Size)
+		if !f.DisableSparseFiles && state.reused == 0 && state.block.IsEmpty() {
+			// There is no need to request a block of all zeroes. Pretend we
+			// requested it and handled it correctly.
+			state.pullDone(state.block)
+			out <- state.sharedPullerState
+			continue
+		}
 
-		requestLimiter.take(bytes)
-		wg.Add(1)
+		var lastError error
+		candidates := f.model.Availability(f.folderID, state.file.Name, state.file.Version, state.block)
+		for {
+			// Select the least busy device to pull the block from. If we found no
+			// feasible device at all, fail the block (and in the long run, the
+			// file).
+			selected, found := activity.leastBusy(candidates)
+			if !found {
+				if lastError != nil {
+					state.fail("pull", lastError)
+				} else {
+					state.fail("pull", errNoDevice)
+				}
+				break
+			}
 
-		go func() {
-			defer wg.Done()
-			defer requestLimiter.give(bytes)
+			candidates = removeAvailability(candidates, selected)
 
-			f.pullBlock(state, out)
-		}()
-	}
-	wg.Wait()
-}
-
-func (f *sendReceiveFolder) pullBlock(state pullBlockState, out chan<- *sharedPullerState) {
-	// Get an fd to the temporary file. Technically we don't need it until
-	// after fetching the block, but if we run into an error here there is
-	// no point in issuing the request to the network.
-	fd, err := state.tempFile()
-	if err != nil {
-		out <- state.sharedPullerState
-		return
-	}
-
-	if !f.DisableSparseFiles && state.reused == 0 && state.block.IsEmpty() {
-		// There is no need to request a block of all zeroes. Pretend we
-		// requested it and handled it correctly.
-		state.pullDone(state.block)
-		out <- state.sharedPullerState
-		return
-	}
-
-	var lastError error
-	candidates := f.model.Availability(f.folderID, state.file, state.block)
-	for {
-		// Select the least busy device to pull the block from. If we found no
-		// feasible device at all, fail the block (and in the long run, the
-		// file).
-		selected, found := activity.leastBusy(candidates)
-		if !found {
+			// Fetch the block, while marking the selected device as in use so that
+			// leastBusy can select another device when someone else asks.
+			activity.using(selected)
+			buf, lastError := f.model.requestGlobal(selected.ID, f.folderID, state.file.Name, state.block.Offset, int(state.block.Size), state.block.Hash, selected.FromTemporary)
+			activity.done(selected)
 			if lastError != nil {
-				state.fail("pull", lastError)
+				l.Debugln("request:", f.folderID, state.file.Name, state.block.Offset, state.block.Size, "returned error:", lastError)
+				continue
+			}
+
+			// Verify that the received block matches the desired hash, if not
+			// try pulling it from another device.
+			_, lastError = verifyBuffer(buf, state.block)
+			if lastError != nil {
+				l.Debugln("request:", f.folderID, state.file.Name, state.block.Offset, state.block.Size, "hash mismatch")
+				continue
+			}
+
+			// Save the block data we got from the cluster
+			_, err = fd.WriteAt(buf, state.block.Offset)
+			if err != nil {
+				state.fail("save", err)
 			} else {
-				state.fail("pull", errNoDevice)
+				state.pullDone(state.block)
 			}
 			break
 		}
-
-		candidates = removeAvailability(candidates, selected)
-
-		// Fetch the block, while marking the selected device as in use so that
-		// leastBusy can select another device when someone else asks.
-		activity.using(selected)
-		buf, lastError := f.model.requestGlobal(selected.ID, f.folderID, state.file.Name, state.block.Offset, int(state.block.Size), state.block.Hash, state.block.WeakHash, selected.FromTemporary)
-		activity.done(selected)
-		if lastError != nil {
-			l.Debugln("request:", f.folderID, state.file.Name, state.block.Offset, state.block.Size, "returned error:", lastError)
-			continue
-		}
-
-		// Verify that the received block matches the desired hash, if not
-		// try pulling it from another device.
-		lastError = verifyBuffer(buf, state.block)
-		if lastError != nil {
-			l.Debugln("request:", f.folderID, state.file.Name, state.block.Offset, state.block.Size, "hash mismatch")
-			continue
-		}
-
-		// Save the block data we got from the cluster
-		_, err = fd.WriteAt(buf, state.block.Offset)
-		if err != nil {
-			state.fail("save", err)
-		} else {
-			state.pullDone(state.block)
-		}
-		break
+		out <- state.sharedPullerState
 	}
-	out <- state.sharedPullerState
 }
 
 func (f *sendReceiveFolder) performFinish(ignores *ignore.Matcher, state *sharedPullerState, dbUpdateChan chan<- dbUpdateJob, scanChan chan<- string) error {
 	// Set the correct permission bits on the new file
-	if !f.IgnorePerms && !state.file.NoPermissions {
+	if !f.ignorePermissions(state.file) {
 		if err := f.fs.Chmod(state.tempName, fs.FileMode(state.file.Permissions&0777)); err != nil {
 			return err
 		}
@@ -1472,7 +1486,7 @@ func (f *sendReceiveFolder) performFinish(ignores *ignore.Matcher, state *shared
 
 		case stat.IsDir():
 			// Dirs only have perm, no modetime/size
-			if !f.IgnorePerms && !state.curFile.NoPermissions && state.curFile.HasPermissionBits() && !protocol.PermsEqual(state.curFile.Permissions, curMode) {
+			if !f.ignorePermissions(state.curFile) && state.curFile.HasPermissionBits() && !scanner.PermsEqual(state.curFile.Permissions, curMode) {
 				l.Debugln("file permission modified but not rescanned; not finishing:", state.curFile.Name)
 				changed = true
 			}
@@ -1704,7 +1718,7 @@ func (f *sendReceiveFolder) inConflict(current, replacement protocol.Vector) boo
 		// Obvious case
 		return true
 	}
-	if replacement.Counter(f.shortID) > current.Counter(f.shortID) {
+	if replacement.Counter(f.model.shortID) > current.Counter(f.model.shortID) {
 		// The replacement file contains a higher version for ourselves than
 		// what we have. This isn't supposed to be possible, since it's only
 		// we who can increment that counter. We take it as a sign that
@@ -1805,6 +1819,11 @@ func (f *sendReceiveFolder) basePause() time.Duration {
 		return defaultPullerPause
 	}
 	return time.Duration(f.PullerPauseS) * time.Second
+}
+
+func (f *sendReceiveFolder) IgnoresUpdated() {
+	f.folder.IgnoresUpdated()
+	f.SchedulePull()
 }
 
 // deleteDir attempts to delete a directory. It checks for files/dirs inside
@@ -1911,42 +1930,4 @@ func componentCount(name string) int {
 		}
 	}
 	return count
-}
-
-type byteSemaphore struct {
-	max       int
-	available int
-	mut       stdsync.Mutex
-	cond      *stdsync.Cond
-}
-
-func newByteSemaphore(max int) *byteSemaphore {
-	s := byteSemaphore{
-		max:       max,
-		available: max,
-	}
-	s.cond = stdsync.NewCond(&s.mut)
-	return &s
-}
-
-func (s *byteSemaphore) take(bytes int) {
-	if bytes > s.max {
-		panic("bug: more than max bytes will never be available")
-	}
-	s.mut.Lock()
-	for bytes > s.available {
-		s.cond.Wait()
-	}
-	s.available -= bytes
-	s.mut.Unlock()
-}
-
-func (s *byteSemaphore) give(bytes int) {
-	s.mut.Lock()
-	if s.available+bytes > s.max {
-		panic("bug: can never give more than max")
-	}
-	s.available += bytes
-	s.cond.Broadcast()
-	s.mut.Unlock()
 }

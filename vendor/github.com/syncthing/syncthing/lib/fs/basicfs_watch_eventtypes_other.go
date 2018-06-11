@@ -12,7 +12,7 @@
 
 package fs
 
-import "github.com/syncthing/notify"
+import "github.com/zillode/notify"
 
 const (
 	subEventMask  = notify.All

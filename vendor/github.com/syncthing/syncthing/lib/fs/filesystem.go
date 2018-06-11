@@ -160,7 +160,7 @@ func NewFilesystem(fsType FilesystemType, uri string) Filesystem {
 	var fs Filesystem
 	switch fsType {
 	case FilesystemTypeBasic:
-		fs = newBasicFilesystem(uri)
+		fs = NewWalkFilesystem(newBasicFilesystem(uri))
 	default:
 		l.Debugln("Unknown filesystem", fsType, uri)
 		fs = &errorFilesystem{
@@ -170,15 +170,10 @@ func NewFilesystem(fsType FilesystemType, uri string) Filesystem {
 		}
 	}
 
-	if l.ShouldDebug("walkfs") {
-		return NewWalkFilesystem(&logFilesystem{fs})
+	if l.ShouldDebug("filesystem") {
+		fs = &logFilesystem{fs}
 	}
-
-	if l.ShouldDebug("fs") {
-		return &logFilesystem{NewWalkFilesystem(fs)}
-	}
-
-	return NewWalkFilesystem(fs)
+	return fs
 }
 
 // IsInternal returns true if the file, as a path relative to the folder
@@ -197,40 +192,4 @@ func IsInternal(file string) bool {
 		}
 	}
 	return false
-}
-
-// Canonicalize checks that the file path is valid and returns it in the "canonical" form:
-// - /foo/bar -> foo/bar
-// - / -> "."
-func Canonicalize(file string) (string, error) {
-	pathSep := string(PathSeparator)
-
-	if strings.HasPrefix(file, pathSep+pathSep) {
-		// The relative path may pretend to be an absolute path within
-		// the root, but the double path separator on Windows implies
-		// something else and is out of spec.
-		return "", ErrNotRelative
-	}
-
-	// The relative path should be clean from internal dotdots and similar
-	// funkyness.
-	file = filepath.Clean(file)
-
-	// It is not acceptable to attempt to traverse upwards.
-	switch file {
-	case "..":
-		return "", ErrNotRelative
-	}
-	if strings.HasPrefix(file, ".."+pathSep) {
-		return "", ErrNotRelative
-	}
-
-	if strings.HasPrefix(file, pathSep) {
-		if file == pathSep {
-			return ".", nil
-		}
-		return file[1:], nil
-	}
-
-	return file, nil
 }

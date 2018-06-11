@@ -8,7 +8,7 @@
 
 package fs
 
-import "github.com/syncthing/notify"
+import "github.com/zillode/notify"
 
 const (
 	subEventMask  = notify.InCreate | notify.InMovedTo | notify.InDelete | notify.InDeleteSelf | notify.InModify | notify.InMovedFrom | notify.InMoveSelf

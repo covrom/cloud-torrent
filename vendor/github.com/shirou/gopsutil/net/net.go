@@ -12,7 +12,11 @@ import (
 	"github.com/shirou/gopsutil/internal/common"
 )
 
-var invoke common.Invoker = common.Invoke{}
+var invoke common.Invoker
+
+func init() {
+	invoke = common.Invoke{}
+}
 
 type IOCountersStat struct {
 	Name        string `json:"name"`        // interface name

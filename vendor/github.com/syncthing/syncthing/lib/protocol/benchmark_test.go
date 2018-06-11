@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/syncthing/syncthing/lib/dialer"
+	"github.com/xtaci/kcp-go"
 )
 
 func BenchmarkRequestsRawTCP(b *testing.B) {
@@ -28,8 +29,35 @@ func BenchmarkRequestsRawTCP(b *testing.B) {
 	benchmarkRequestsConnPair(b, conn0, conn1)
 }
 
+func BenchmarkRequestsRawKCP(b *testing.B) {
+	// Benchmarks the rate at which we can serve requests over a single,
+	// unencrypted KCP channel over the loopback interface.
+
+	// Get a connected KCP pair
+	conn0, conn1, err := getKCPConnectionPair()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer conn0.Close()
+	defer conn1.Close()
+
+	// Bench it
+	benchmarkRequestsConnPair(b, conn0, conn1)
+}
+
 func BenchmarkRequestsTLSoTCP(b *testing.B) {
 	conn0, conn1, err := getTCPConnectionPair()
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer conn0.Close()
+	defer conn1.Close()
+	benchmarkRequestsTLS(b, conn0, conn1)
+}
+
+func BenchmarkRequestsTLSoKCP(b *testing.B) {
+	conn0, conn1, err := getKCPConnectionPair()
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -80,9 +108,9 @@ func benchmarkRequestsConnPair(b *testing.B, conn0, conn1 net.Conn) {
 		// Use c0 and c1 for each alternating request, so we get as much
 		// data flowing in both directions.
 		if i%2 == 0 {
-			buf, err = c0.Request("folder", "file", int64(i), 128<<10, nil, 0, false)
+			buf, err = c0.Request("folder", "file", int64(i), 128<<10, nil, false)
 		} else {
-			buf, err = c1.Request("folder", "file", int64(i), 128<<10, nil, 0, false)
+			buf, err = c1.Request("folder", "file", int64(i), 128<<10, nil, false)
 		}
 
 		if err != nil {
@@ -138,6 +166,35 @@ func getTCPConnectionPair() (net.Conn, net.Conn, error) {
 	return conn0, conn1, nil
 }
 
+func getKCPConnectionPair() (net.Conn, net.Conn, error) {
+	lst, err := kcp.Listen("127.0.0.1:0")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var conn0 net.Conn
+	var err0 error
+	done := make(chan struct{})
+	go func() {
+		conn0, err0 = lst.Accept()
+		close(done)
+	}()
+
+	// Dial the connection
+	conn1, err := kcp.Dial(lst.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Check any error from accept
+	<-done
+	if err0 != nil {
+		return nil, nil, err0
+	}
+
+	return conn0, conn1, nil
+}
+
 func negotiateTLS(cert tls.Certificate, conn0, conn1 net.Conn) (net.Conn, net.Conn) {
 	cfg := &tls.Config{
 		Certificates:           []tls.Certificate{cert},
@@ -171,7 +228,7 @@ func (m *fakeModel) Index(deviceID DeviceID, folder string, files []FileInfo) {
 func (m *fakeModel) IndexUpdate(deviceID DeviceID, folder string, files []FileInfo) {
 }
 
-func (m *fakeModel) Request(deviceID DeviceID, folder string, name string, offset int64, hash []byte, weakHAsh uint32, fromTemporary bool, buf []byte) error {
+func (m *fakeModel) Request(deviceID DeviceID, folder string, name string, offset int64, hash []byte, fromTemporary bool, buf []byte) error {
 	// We write the offset to the end of the buffer, so the receiver
 	// can verify that it did in fact get some data back over the
 	// connection.

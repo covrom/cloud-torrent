@@ -7,8 +7,6 @@
 package main
 
 import (
-	"os"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -107,6 +105,4 @@ func init() {
 		replicationSendsTotal, replicationRecvsTotal,
 		databaseKeys, databaseStatisticsSeconds,
 		databaseOperations, databaseOperationSeconds)
-
-	prometheus.MustRegister(prometheus.NewProcessCollector(os.Getpid(), "syncthing_discovery"))
 }
